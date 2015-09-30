@@ -2,9 +2,11 @@
 use strict;
 use warnings;
 
-use Data::Printer;
-
+use File::Temp qw( tempdir );
+use File::Spec::Functions qw( catfile );
+use POSIX qw( mkfifo );
 use Fcntl;
+use IPC::System::Simple qw( capturex );
 
 local $| = 1;
 
@@ -16,7 +18,7 @@ use constant GDBLINES => (
         "delete breakpoints"
 );
 
-use constant TEMPLATE1 => q#call Perl_eval_pv("{
+use constant TEMPLATE1 => chomp q#call Perl_eval_pv("{
         local $_;
         local $@;
         local $!;
@@ -24,28 +26,26 @@ use constant TEMPLATE1 => q#call Perl_eval_pv("{
         local %INC = %INC;
         local @INC = @INC;
         local %SIG = %SIG;
-        local $| = 1;#;
+        local $| = 1;
+#;
 
-use constant TEMPLATE2 => q#
+use constant TEMPLATE2 => chomp q#
 	if ( open(my $fh, '>', '%s') ) {
 		%s;
 		close($fh);
         }
-}", 0)#;
+}", 0)
+#;
 
-use constant STACKDUMP => q#
+use constant STACKDUMP => chomp q#
 unless ( exists($INC{'Carp.pm'}) ) {
-        require Carp;
+    require Carp;
 }
 
-print $fh Carp::longmess('DEBUG');#;
-
+print $fh Carp::longmess('DEBUG');
+#;
 
 my $pid = $ARGV[0];
-
-use File::Temp qw(tempdir);
-use File::Spec::Functions qw(catfile);
-use POSIX qw(mkfifo);
 
 my $dir = tempdir(CLEANUP=>1);
 my $fifo = catfile($dir, "fifo0");
@@ -58,8 +58,6 @@ $inject =~ s/\n/\\\n/g;
 my @command = map { ("-ex", $_) } GDBLINES, $inject, "detach", "Quit";
 
 open (my $readhandle, "+<", $fifo) or die "Could not open FIFO for reading";
-
-use IPC::System::Simple qw( capturex );
 
 my $output = capturex("gdb", "-p", $pid, @command);
 
