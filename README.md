@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 Where/when can I use this?
 
 It works on scripts. 
@@ -51,3 +52,7 @@ See also:
 - https://gist.github.com/p120ph37/2bf794a86eeab0445658
 - https://metacpan.org/pod/Devel::Trepan
 - http://search.cpan.org/~arc/perl/pod/perldebug.pod
+=======
+# gdb-inject-perl
+Inject code into a running Perl process, using GDB. Dangerous, but useful for getting debug info in a pinch.
+>>>>>>> e25016283ea1c45243e24cb4fa85f12da09b62dc
