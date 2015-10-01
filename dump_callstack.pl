@@ -13,7 +13,7 @@ use List::Util qw( first );
 use IO::Select;
 
 use File::Which qw( which );
-use Capture::Tiny qw( capture tee );
+use Capture::Tiny qw( capture tee capture_merged );
 
 # Wait 5 seconds for data on the pipe, then bail.
 use constant TIMEOUT => 5;
@@ -88,7 +88,10 @@ unless ( $force ) {
         die "Double quotation marks are not allowed in supplied code. Use --force to override."
     }
 
-    my $inject = sprintf(TEMPLATE1, "/dev/null", $code, 0, $PROCESS_ID,);
+    my $inject = sprintf(TEMPLATE1, "/dev/null", $code, 0, $PROCESS_ID);
+
+    print "Validating code to be injected. Generated code:\n$inject\n" if $verbose;
+
     my $testscript = catfile($dir, "test.pl");
 
     open(my $fh, ">", $testscript) or die "Could not open test script $testscript for writing: $OS_ERROR";
@@ -96,7 +99,7 @@ unless ( $force ) {
     close $fh;
 
     my $perl = which("perl");
-    my $combinedoutput = qx/$perl -Mstrict -Mwarnings -c $testscript 2>&1/;
+    my $combinedoutput = capture_merged{ system($perl, qw(-Mstrict -Mwarnings -c), $testscript); };
     my $exitcode = $CHILD_ERROR >> 8;
     if ( $exitcode || trim($combinedoutput) !~ qr/syntax OK/ ) {
         die sprintf(
@@ -105,6 +108,8 @@ unless ( $force ) {
             $combinedoutput,
             $exitcode,
         );
+    } elsif ( $verbose ) {
+        print "Compilation output: $combinedoutput\n\n";
     }
 }
 
