@@ -1,5 +1,4 @@
 # Overview
-### What does it do?
 gdb-inject-perl is a script that uses [GDB](http://www.gnu.org/software/GDB/) to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
 ### Usage
@@ -69,14 +68,6 @@ This program only works on POSIX-like OSes on which GDB is installed. In practic
 
 Just pass it the process ID of a Perl process and it will do its best to inject code.
 
-### Requirements
-- POSIX-ish OS.
-- Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
-- GDB installed.
-- CPAN modules:
-	- [`File::Which`](https://metacpan.org/pod/File::Which)
-	- [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
-
 ### So what's the catch?
 It's incredibly dangerous.
 
@@ -89,6 +80,13 @@ gdb-inject-perl is recommended for use on processes that are already known to be
 
 If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use gdb-inject-perl to get more information.
 
+# System Requirements
+- POSIX-ish OS.
+- Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
+- GDB installed.
+- CPAN modules:
+	- [`File::Which`](https://metacpan.org/pod/File::Which)
+	- [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
 
 # FAQ
 
