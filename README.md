@@ -1,13 +1,29 @@
-# gdb-inject-perl
-Inject code into a running Perl process, using GDB. Dangerous, but useful for getting debug info in a pinch.
-
+# Overview
 ### What does it do?
 
 It uses [GDB](http://www.gnu.org/software/GDB/) to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
-### How do I use it?
+### Usage
 
-First, identify the PID of the 
+##### Prerequisites:
+
+1. First, identify the PID of the Perl process that you want to debug. In the below examples, it's a backgrounded process created at the top.
+2. Ensure you are running as a user with permissions to attach to the PID in question (either the user that owns the process or root, usually).
+
+##### Dumping the call stack:
+
+
+##### Running arbitrary code:
+
+
+##### Safeguards:
+There are a few basic safeguards used by gdb-inject-perl. 
+
+- Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
+	- **Warning:** "Will it compile?" is checked using `perl -c`, which []will run BEGIN and END blocks](http://stackoverflow.com/a/12908487/249199). If your code has any, it's probably a bad idea. Also, they will be executed during the pre-injection compilation check.
+- Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
+	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
+- If `gdb` cannot be found on your system, the script will not start.
 
 ### Where/when can I use it?
 
@@ -19,6 +35,17 @@ This program only works on POSIX-like OSes on which GDB is installed. In practic
 - It works on (many/most) embedded Perls.
 
 Just pass it the process ID of a Perl process and it will do its best to inject code.
+
+### Requirements
+
+- POSIX-ish OS.
+- Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
+- GDB installed.
+- CPAN modules:
+	- `File::Which`
+	- `Capture::Tiny`
+
+
 
 ### So what's the catch?
 It's incredibly dangerous.
@@ -32,6 +59,18 @@ In short, it should not be used on a healthy process with important functionalit
 gdb-inject-perl is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
 
 If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use gdb-inject-perl to get more information.
+
+
+# FAQ
+
+### It doesn't work; it just says "Attaching to process". What gives?
+
+Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). Try `strace` and friends.
+
+### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
+
+You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gnat_ugn_unw/Codesigning-the-Debugger.html).
+
 
 ### I want to inject something that changes my running program's state. Can I?
 
