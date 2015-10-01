@@ -72,7 +72,7 @@ There are a few basic safeguards used by gdb-inject-perl.
 	* This option is required.
 * **--code CODE**
 	* String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned
-               by inject.pl. If CODE is ommitted, it defaults to printing the value of Carp::longmess to $fh.
+               by inject.pl. If CODE is omitted, it defaults to printing the value of Carp::longmess to $fh.
 	* CODE should not perform complex alterations or change the state of the program being attached to.
 	* CODE may not contain double quotation marks or Perl code that does not compile with strict and warnings. To bypass these restrictions, use --force.
 * **--verbose**
@@ -99,7 +99,7 @@ It's incredibly dangerous.
 
 The script works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it _does_ modify anything, the interpreter might not detect state changes correctly.
 
-In short, it should not be used on a healthy process with important functionality that could be interrupted. "Interrupted", in this case, does not mean the same thing as a signal interrupt (Perl-safe or unsafe); it's possible to break/segfault/corrupt Perl in the midst of operations that would not normally be interruptible at all. gdb-inject-perl tries to mimic safe-signal delivery behavior, but does not do so erfectly.
+In short, it should not be used on a healthy process with important functionality that could be interrupted. "Interrupted", in this case, does not mean the same thing as a signal interrupt (Perl-safe or unsafe); it's possible to break/segfault/corrupt Perl in the midst of operations that would not normally be interruptible at all. gdb-inject-perl tries to mimic safe-signal delivery behavior, but does not do so perfectly.
 
 ### Where/when _should_ I use it?
 gdb-inject-perl is recommended for use on processes that are already known to be deranged, and that are soon to be killed.

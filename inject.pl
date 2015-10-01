@@ -193,7 +193,7 @@ This option is required.
 
 =item B<--code CODE>
 
-String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned by inject.pl. If CODE is ommitted, it defaults to printing the value of L<Carp::longmess> to $fh.
+String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned by inject.pl. If CODE is omitted, it defaults to printing the value of L<Carp::longmess> to $fh.
 
 CODE should not perform complex alterations or change the state of the program being attached to.
 
