@@ -1,3 +1,29 @@
+# Contents
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Overview](#overview)
+    - [Usage](#usage)
+        - [Setup](#setup)
+        - [Dumping the call stack](#dumping-the-call-stack)
+        - [Running arbitrary code](#running-arbitrary-code)
+        - [Safeguards and limitations](#safeguards-and-limitations)
+        - [Options](#options)
+    - [Where/when can I use it?](#wherewhen-can-i-use-it)
+    - [So what's the catch?](#so-whats-the-catch)
+    - [Where/when _should_ I use it?](#wherewhen-_should_-i-use-it)
+- [System Requirements](#system-requirements)
+- [FAQ](#faq)
+    - [It doesn't work; it just says "Attaching to process". What gives?](#it-doesnt-work-it-just-says-attaching-to-process-what-gives)
+    - [On OSX it times out after saying "Unable to find Mach task port for process-id ___"](#on-osx-it-times-out-after-saying-unable-to-find-mach-task-port-for-process-id-___)
+    - [I want to inject something that changes my running program's state. Can I?](#i-want-to-inject-something-that-changes-my-running-programs-state-can-i)
+    - [I want to inject code into multiple places inside a process. Can I?](#i-want-to-inject-code-into-multiple-places-inside-a-process-can-i)
+    - [Why not just use the Perl debugger/GDB directly?](#why-not-just-use-the-perl-debuggergdb-directly)
+    - [Why use FIFOs, and not use perl debugger's RemotePort functionality?](#why-use-fifos-and-not-use-perl-debuggers-remoteport-functionality)
+- [See also:](#see-also)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 # Overview
 gdb-inject-perl is a script that uses [GDB](http://www.gnu.org/software/GDB/) to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
