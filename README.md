@@ -2,6 +2,7 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+
 - [Overview](#overview)
     - [Usage](#usage)
         - [Setup](#setup)
@@ -20,7 +21,7 @@
     - [I want to inject code into multiple places inside a process. Can I?](#i-want-to-inject-code-into-multiple-places-inside-a-process-can-i)
     - [Why not just use the Perl debugger/GDB directly?](#why-not-just-use-the-perl-debuggergdb-directly)
     - [Why use FIFOs, and not use perl debugger's RemotePort functionality?](#why-use-fifos-and-not-use-perl-debuggers-remoteport-functionality)
-- [See also:](#see-also)
+- [Additional Resources](#additional-resources)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -135,7 +136,7 @@ Probably, but if you do, don't tell me how you pulled it off. It sounds like you
 ### Why use FIFOs, and not use perl debugger's RemotePort functionality?
 Something else might be using it. gdb-inject-perl is meant to be usable with minimal interference with other code running in a Perl process, _even other debuggers_.
 
-# See also:
+# Additional Resources
 - Perlmonks [conversation about gdb-eval injection](http://www.perlmonks.org/?node_id=694095)
 - Massive [presentation on various Perl debugging strategies, including this one](https://docs.google.com/presentation/d/1Lxk_YHUEV3k4dXJZlpsgUuph0PwmvpHbI8EX8Igy5rY/edit#slide=id.g11c288d8_0_35)
 - [Script that does the same thing, but for threaded perl](https://gist.github.com/p120ph37/2bf794a86eeab0445658)
