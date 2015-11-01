@@ -1,1 +1,0 @@
-github-resources/CONTRIBUTING.md
