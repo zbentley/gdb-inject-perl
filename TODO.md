@@ -3,6 +3,7 @@
 - CPANify install, with deps.
 - Build system:
 	- Doctoc for README(s).
+	- Automatically pull in latest CONTRIBUTING full copy, rather than using a link.
 	- Placeholders for project and script name.
 	- Deduplication between pod sections and README.
 	- Interpolation of longmess so as not to need Carp?
