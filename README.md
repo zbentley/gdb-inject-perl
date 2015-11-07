@@ -62,7 +62,7 @@ gdb-inject-perl is a script that uses [GDB](http://www.gnu.org/software/GDB/) to
 There are a few basic safeguards used by gdb-inject-perl. 
 
 - Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
-	- **Warning:** "Will it compile?" is checked using `perl -c`, which []will run BEGIN and END blocks](http://stackoverflow.com/a/12908487/249199). If your code has any, it's probably a bad idea. Also, they will be executed during the pre-injection compilation check.
+	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
 - Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
 	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
 - If `gdb` cannot be found on your system, the script will not start.
@@ -127,10 +127,11 @@ You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gna
 Sure, but don't come crying to me when it segfaults your application.
 
 ### I want to inject code into multiple places inside a process. Can I?
-Probably, but if you do, don't tell me how you pulled it off. It sounds like you need a [real](https://metacpan.org/pod/Devel::Trepan) [debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod).
+Probably, but if you do, don't tell me how you pulled it off. It sounds like you need a [real](https://metacpan.org/pod/Devel::Trepan)[1] [debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod)[2].
 
 ### Why not just use the Perl debugger/GDB directly?
-- You might not need it. gdb-inject-perl is intended for a much, much simpler use case than the Perl debugger (or the excellent [trepan](https://metacpan.org/pod/Devel::Trepan)): getting a little bit of context information out of a process that you might not know anything about. As a result, **simplicity is paramount**: the person monitoring and/or killing a Perl process might not know how to use the Perl debugger; they might not be a developer at all.
+- You might not need it. gdb-inject-perl is intended for a much, much simpler use case than the [Perl debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod) (or the excellent [trepan](https://metacpan.org/pod/Devel::Trepan)): getting a little bit of context information out of a process that you might not know anything about.
+	- **Simplicity is paramount**: the person monitoring and/or killing a Perl process might not know how to use the Perl debugger; they might not know what Perl is. Consider the example of a support technician or administrator that finds a process that is hung and breaking an important service: with gdb-inject-perl, they can run a command, send its output to the developers that maintain the service, and kill it as the normally would: no Perl understanding required.
 - Debug symbols/Perl debugger support might not exist in your environment (certain embedded Perls, or bizarre system Perls). Even in those cases, the "caller" stack is usable for context information about a Perl process, and gdb-inject-perl can get it for you.
 
 ### Why use FIFOs, and not use perl debugger's RemotePort functionality?
