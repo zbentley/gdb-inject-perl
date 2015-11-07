@@ -3,20 +3,18 @@ use strict;
 use warnings;
 
 use English qw( -no-match-vars );
-use File::Temp qw( tempdir );
 
-use File::Spec::Functions qw( catfile );
+use File::Temp qw( tempdir );
+use File::Spec::Functions qw( catfile splitpath );
 use POSIX qw( mkfifo );
 use Getopt::Long qw( GetOptions );
 use Pod::Usage qw( pod2usage );
 use List::Util qw( first );
 use IO::Select;
-
 use File::Which qw( which );
 use Capture::Tiny qw( capture tee capture_merged );
 
-# Wait 5 seconds for data on the pipe, then bail.
-use constant TIMEOUT => 5;
+my $DEBUG;
 
 use constant GDBLINES => (
     "set confirm off",
@@ -40,6 +38,12 @@ use constant TEMPLATE1 => q/{
     }
 };/;
 
+use constant GDB_FAILURE_STRINGS => (
+    "Can't attach to process",
+    "Operation not permitted",
+    "The program is not being run",
+);
+
 # Default code to inject.
 use constant STACKDUMP => q/
 unless ( exists($INC{'Carp.pm'}) ) {
@@ -47,82 +51,115 @@ unless ( exists($INC{'Carp.pm'}) ) {
 }
 print $fh Carp::longmess('DEBUG');/;
 
-use constant GDB_SEARCH_PATHS => (
-    "/usr/bin/gdb",
-    "/usr/local/bin/gdb" ,
-    "/bin/gdb",
-    $ENV{GDB},
-    catfile( $ENV{HOMEBREW_ROOT}, "gdb" ),
-    catfile( $ENV{HOMEBREW_ROOT}, "bin/gdb" ),
-);
-
 sub trim ($) {
     my $str = shift || "";
     $str =~ s/^\s+|\s+$//g;
     return $str;
 }
 
-$OUTPUT_AUTOFLUSH = 1;
-
-my $usage;
-GetOptions(
-    "pid:i" => \( my $pid ),
-    "code:s" => \( my $code = STACKDUMP ),
-    "force" => \( my $force ),
-    "verbose" => \( my $verbose ),
-    help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
-    man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
-) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
-
-# Try *really hard* to find a GDB binary.
-my $gdb = which("gdb") || first { -x $_ } GDB_SEARCH_PATHS;
-
-unless ( $gdb ) {
-    die "A usable GDB could not be found on the system.";
+sub logline {
+    my ( $msg ) = @_;
+    return sprintf(
+        "[%s] %s\n",
+        (splitpath($PROGRAM_NAME))[2],
+        trim($msg)
+    );
 }
 
-my $dir = tempdir( CLEANUP => 1 );
+# Logging functions to deliniate between output from this script and output from
+# the commands it runs.
+sub debug {
+    print logline(@_) if $DEBUG;
+    return;
+}
 
-unless ( $force ) {
-    unless ( index($code, '"') == -1 ) {
-        die "Double quotation marks are not allowed in supplied code. Use --force to override."
+sub fatal {
+    die logline(@_);
+}
+
+sub get_parameters {
+	GetOptions(
+	    "pid:i" => \( my $pid ), # TODO assert positive
+	    "timeout:i" => \( my $timeout = 5 ), # TODO assert positive
+	    "code:s" => \( my $code = STACKDUMP ),
+	    "force" => \( my $force ),
+	    "verbose" => \$DEBUG,
+	    help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
+	    man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
+	) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
+
+	# Try *really hard* to find a GDB binary.
+	my $gdb = which("gdb") || first { -x $_ } (
+        which("gdb"),
+        "/usr/bin/gdb",
+        "/usr/local/bin/gdb" ,
+        "/bin/gdb",
+        $ENV{GDB},
+        catfile( $ENV{HOMEBREW_ROOT}, "gdb" ),
+        catfile( $ENV{HOMEBREW_ROOT}, "bin/gdb" ),
+    );
+
+	unless ( $gdb ) {
+	    fatal("A usable GDB could not be found on the system.");
+	}
+
+	if (! $pid) {
+	    pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
+	}
+
+	if (! $force && index($code, '"') > -1) {
+        fatal("Double quotation marks are not allowed in supplied code. Use --force to override.");
     }
 
+	return ( $pid, $code, $timeout, $force, $gdb );
+}
+
+# Make sure that the supplied code compiles.
+sub self_test_code {
+    my ( $code, $dir ) = @_;
     my $inject = sprintf(TEMPLATE1, "/dev/null", $code, 0, $PROCESS_ID);
 
-    print "Validating code to be injected. Generated code:\n$inject\n" if $verbose;
+    debug("Validating code to be injected. Generated code:\n$inject\n");
 
-    my $testscript = catfile($dir, "test.pl");
+    my $testscript = catfile($dir, "self_test.pl");
 
-    open(my $fh, ">", $testscript) or die "Could not open test script $testscript for writing: $OS_ERROR";
+    open(my $fh, ">", $testscript) or fatal("Could not open test script $testscript for writing: $OS_ERROR");
     print $fh "$inject\n";
     close $fh;
 
     my $perl = which("perl");
-    my $combinedoutput = capture_merged{ system($perl, qw(-Mstrict -Mwarnings -c), $testscript); };
+    my $combinedoutput = capture_merged { system($perl, qw(-Mstrict -Mwarnings -c), $testscript); };
     my $exitcode = $CHILD_ERROR >> 8;
-    if ( $exitcode || trim($combinedoutput) !~ qr/syntax OK/ ) {
-        die sprintf(
+    if ($exitcode || trim($combinedoutput) !~ qr/syntax OK/) {
+        fatal(sprintf(
             "Supplied code was not valid. Use --force to override.\nGenerated code:%s\nCompilation Output: %s\nCompilation exit status: %d",
             $inject,
             $combinedoutput,
             $exitcode,
-        );
-    } elsif ( $verbose ) {
-        print "Compilation output: $combinedoutput\n\n";
+        ));
     }
+    
+    return debug("Compilation output: $combinedoutput");
 }
 
-if ( ! $pid ) {
-    pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
-}
+local $OUTPUT_AUTOFLUSH = 1;
+
+my ( $pid, $code, $timeout, $force, $gdb ) = get_parameters();
+
+# Make the tempdirs look at least somewhat meaningful on the filesystem.
+my $dir = tempdir(
+    join("-", $PROGRAM_NAME, $pid, "X" x 5),
+    CLEANUP => 1,
+);
+
+self_test_code($code, $dir) unless $force;
 
 # End validation section.
 
-my $fifo = catfile( $dir, "fifo" );
-mkfifo($fifo, 0700) or die "Could not make FIFO: $OS_ERROR";
+my $fifo = catfile( $dir, "communication_pipe" );
+mkfifo($fifo, 0700) or fatal("Could not make FIFO: $OS_ERROR");
 
-open (my $readhandle, "+<", $fifo) or die "Could not open FIFO for reading";
+open (my $readhandle, "+<", $fifo) or fatal("Could not open FIFO for reading");
 
 my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, $pid, $PROCESS_ID));
 
@@ -131,18 +168,19 @@ $inject =~ s/\n/\\\n/g;
 
 my @command = ( $gdb, "-quiet", "-p", $pid, map { ("-ex", $_) } GDBLINES, $inject, "detach", "Quit");
 
-if ( $verbose ) {
-    tee { system(@command) };
-} else {
-    capture { system(@command) };
-}
+my $runcmd = $DEBUG ? \&Capture::Tiny::tee : \&Capture::Tiny::capture;
+my ( $stdout, $stderr ) = $runcmd->(sub { return system(@command); });
 
-printf("GDB exited with status %d\n", $CHILD_ERROR >> 8) if $verbose;
+debug(sprintf("GDB exited with status %d", $CHILD_ERROR >> 8));
+
+if ( grep { index($stderr, $_) > -1} GDB_FAILURE_STRINGS ) {
+    fatal("Error injecting code:\n$stderr");
+}
 
 my $select = IO::Select->new;
 $select->add($readhandle);
-unless ( $select->can_read(TIMEOUT) ) {
-    die sprintf("Could not get debug information within %d seconds.", TIMEOUT);
+unless ( $select->can_read($timeout) ) {
+    fatal("Could not get debug information within $timeout seconds.");
 }
 
 my $line;
@@ -154,7 +192,7 @@ __END__
 
 =head1 NAME
 
-inject.pl - Inject code into a running Perl process, using GDB. Dangerous, but useful for getting debug info in a pinch.
+inject.pl - Inject code into a running Perl process, using GDB. Dangerous, but useful as a fast, simple way to get debug info.
 
 =head1 SYNOPSIS
 
@@ -193,19 +231,25 @@ This option is required.
 
 =item B<--code CODE>
 
-String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned by inject.pl. If CODE is omitted, it defaults to printing the value of L<Carp::longmess> to $fh.
+String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned by inject.pl. If C<CODE> is omitted, it defaults to printing the value of L<Carp::longmess> to $fh.
 
-CODE should not perform complex alterations or change the state of the program being attached to.
+C<CODE> should not perform complex alterations or change the state of the program being attached to.
 
-CODE may not contain double quotation marks or Perl code that does not compile with L<strict> and L<warnings>. To bypass these restrictions, use --force.
+C<CODE> may not contain double quotation marks or Perl code that does not compile with L<strict> and L<warnings>. To bypass these restrictions, use --force.
 
 =item B<--verbose>
 
-Show all GDB output in addition to values captured from the process at PID.
+Show all GDB output in addition to values captured from the process at C<PID>.
 
 =item B<--force>
 
-Bypass sanity checks and restrictions on the content of CODE.
+Bypass sanity checks and restrictions on the content of C<CODE>.
+
+=item B<--timeout SECONDS>
+
+Number of seconds to wait until C<PID> runs C<CODE>. If the timeout is exceeded (usually because C<PID> is in the middle of a blocking system call), C<inject.pl> gives up. 
+
+Defaults to 5.
 
 =item B<--help>
 
@@ -219,10 +263,10 @@ Show manpage/perldoc.
 
 =head1 DESCRIPTION
 
-inject.pl is a script that uses GDB to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
+C<inject.pl> is a script that uses GDB to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
-inject.pl is incredibly dangerous. It works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it _does_ modify anything, the interpreter might not detect state changes correctly.
+C<inject.pl> is incredibly dangerous. It works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it B<does> modify anything, the interpreter might not detect state changes correctly.
 
-inject.pl is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
+C<inject.pl> is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
 
 =cut
