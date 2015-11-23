@@ -18,6 +18,7 @@ use POSIX qw( mkfifo );
 use Time::HiRes ();
 
 my ( $DEBUG, $EOF );
+local $OUTPUT_AUTOFLUSH = 1;
 
 use constant {
     GDBLINES => [
@@ -42,7 +43,6 @@ use constant {
         local $| = 1;
         if ( open(my $fh, q{>}, q{%s}) ) {
             %s;
-            print STDOUT qq{FOOOOOOOOOO\n};
             print $fh qq{%s\n};
             close($fh);
         }
@@ -153,7 +153,7 @@ sub capture_only_stdout_visible  {
 }
 
 sub get_parameters {
-    my $pid;
+    my ( $pid, $signals );
     GetOptions(
         # TODO assert positive
         "pid:i" => sub {
@@ -166,7 +166,11 @@ sub get_parameters {
         "code:s" => \( my $code = STACKDUMP ),
         "force" => \( my $force ),
         "verbose" => \$DEBUG,
-        "signals!" => \( ( my $signals = 1) && require Term::ReadKey ),
+        "signals!" => sub {
+            $signals = $_[1]; 
+            require Term::ReadKeyd if $signals;
+            return;
+        },
         help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
         man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
     ) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
@@ -221,8 +225,6 @@ sub self_test_code {
     return debug("Compilation output: $combinedoutput");
 }
 
-local $OUTPUT_AUTOFLUSH = 1;
-
 my ( $pid, $code, $timeout, $force, $signals, $gdb ) = get_parameters();
 
 # Make the tempdirs look at least somewhat meaningful on the filesystem.
@@ -262,7 +264,7 @@ my ( $stdout, $stderr ) = $runcmd->(sub {
     my $sent = -1;
     my $gdbtimeout = $timeout;
     while ( $gdbtimeout > 0 && $fork->pumpable ) {
-        if ( prompt_for_kill($pid, $sent++) ) {
+        if ( $signals && prompt_for_kill($pid, $sent++) ) {
             $skip = 1;
         } elsif ( ! $skip ) {
             $gdbtimeout -= poll_sleep();
