@@ -150,6 +150,7 @@ my ( $pid, $code, $timeout, $force, $gdb ) = get_parameters();
 my $dir = tempdir(
     join("-", $PROGRAM_NAME, $pid, "X" x 5),
     CLEANUP => 1,
+    TMPDIR => 1,
 );
 
 self_test_code($code, $dir) unless $force;
