@@ -4,57 +4,105 @@ use warnings;
 
 use English qw( -no-match-vars );
 
-use File::Temp qw( tempdir );
+use Capture::Tiny qw( tee tee_stdout capture_merged capture_stderr );
+use Config;
+use Fcntl;
 use File::Spec::Functions qw( catfile splitpath );
-use POSIX qw( mkfifo );
-use Getopt::Long qw( GetOptions );
-use Pod::Usage qw( pod2usage );
-use List::Util qw( first );
-use IO::Select;
+use File::Temp qw( tempdir );
 use File::Which qw( which );
-use Capture::Tiny qw( capture tee capture_merged );
+use Getopt::Long qw( GetOptions );
+use IPC::Run ();
+use List::Util qw( first );
+use Pod::Usage qw( pod2usage );
+use POSIX qw( mkfifo );
+use Time::HiRes ();
 
-my $DEBUG;
+my ( $DEBUG, $EOF );
 
-use constant GDBLINES => (
-    "set confirm off",
-    "set variable PL_sig_pending = 1",
-    "b Perl_despatch_signals",
-    "c",
-    "delete breakpoints",
-);
-
-use constant TEMPLATE1 => q/{
-    local $_;
-    local $@;
-    local $!;
-    local @_;
-    local %%SIG = %%SIG;
-    local $| = 1;
-    if ( open(my $fh, q{>}, q{%s}) ) {
-        %s;
-        print $fh qq{END %d-%d\n};
-        close($fh);
+use constant {
+    GDBLINES => [
+        # Don't ask questions on the command line.
+        "set confirm off",
+        # Pass signals through to Perl without stopping the debugger.
+        "handle all noprint nostop",
+        # Register a pending signal with Perl.
+        "set variable PL_sig_pending = 1",
+        # Stop when we get to the safe-ish signal handler.
+        "b Perl_despatch_signals",
+        # Wait for signalling to happen.
+        "c",
+        "delete breakpoints",
+    ],
+    TEMPLATE1 => q/{
+        local $_;
+        local $@;
+        local $!;
+        local @_;
+        local %%SIG = %%SIG;
+        local $| = 1;
+        if ( open(my $fh, q{>}, q{%s}) ) {
+            %s;
+            print STDOUT qq{FOOOOOOOOOO\n};
+            print $fh qq{%s\n};
+            close($fh);
+        }
+    };/,
+    GDB_FAILURE_STRINGS => [
+        "Can't attach to process",
+        "Operation not permitted",
+        "The program is not being run",
+    ],
+    # Default code to inject.
+    STACKDUMP => q/
+    unless ( exists($INC{'Carp.pm'}) ) {
+        require Carp;
     }
-};/;
+    print $fh Carp::longmess('DEBUG');/,
+    # Enums
+    NUMBER => 1,
+    NAME => 2,
+    ORDER => 3,
+};
 
-use constant GDB_FAILURE_STRINGS => (
-    "Can't attach to process",
-    "Operation not permitted",
-    "The program is not being run",
-);
+my %sig;
+sub signals_by {
+    $sig{RAW} ||= [ split(' ', $Config{sig_name}) ];
 
-# Default code to inject.
-use constant STACKDUMP => q/
-unless ( exists($INC{'Carp.pm'}) ) {
-    require Carp;
+    if ( $_[0] == NUMBER ) {
+        return $sig{NUM} ||= { map { $_ => $sig{RAW}->[$_] } (1..scalar(@{$sig{RAW}}) - 1) };
+    } elsif ( $_[0] == NAME ) {
+        return $sig{NAME} ||= { map { $_ => 1 } @{$sig{RAW} } };
+    } elsif ( $_[0] == ORDER ) {
+        return $sig{RAW};
+    } else {
+        fatal("Invalid argument: $_[0]");
+    }
 }
-print $fh Carp::longmess('DEBUG');/;
 
 sub trim ($) {
     my $str = shift || "";
     $str =~ s/^\s+|\s+$//g;
     return $str;
+}
+
+sub poll_sleep {
+    Time::HiRes::sleep(0.25);
+    return 0.25;
+}
+
+# Logging functions to deliniate between output from this script and output from
+# the commands it runs.
+sub debug {
+    print logline(@_) if $DEBUG;
+    return;
+}
+
+sub info {
+    print logline(@_);
+}
+
+sub fatal {
+    die logline(@_);
 }
 
 sub logline {
@@ -66,30 +114,65 @@ sub logline {
     );
 }
 
-# Logging functions to deliniate between output from this script and output from
-# the commands it runs.
-sub debug {
-    print logline(@_) if $DEBUG;
-    return;
+sub prompt_for_kill {
+    my ( $pid, $sent ) = @_;
+    my $returnvalue;
+    unless ( $sent ) {
+        info("Press a number key to send a signal to $pid. Press 'l' or 'L' to list signals.");
+    }
+    if ( my $key = uc(trim(Term::ReadKey::ReadKey(-1))) ) {
+        my $bynum = signals_by(NUMBER);
+        if ( $bynum->{$key} ) {
+            $key = $bynum->{$key};
+        }
+        if ( exists signals_by(NAME)->{$key} ) {
+            kill($key, $pid) or fatal("Kill failed: $OS_ERROR");
+            info("Kill $key sent to $pid");
+            $returnvalue = 1;
+        } else {
+            if ( $key ne "L" ) {
+                info("Invalid entry. Please enter a number or signal name in the following listing:");
+            }
+            my $num = 0;
+            print "Number:  Name:\n";
+            foreach my $signal (@{signals_by(ORDER)}) {
+                print ++$num . "\t$signal\n";
+            }
+            if ( $key ne "L" ) {
+                $returnvalue = prompt_for_kill($pid, 0);
+            }
+        }
+    }
+    return $returnvalue;
 }
 
-sub fatal {
-    die logline(@_);
+sub capture_only_stdout_visible  {
+    my ( $code, $out, $err ) = @_;
+    $out = tee_stdout { $err = capture_stderr(\&{$code}) };
+    return ( $out, $err );
 }
 
 sub get_parameters {
-	GetOptions(
-	    "pid:i" => \( my $pid ), # TODO assert positive
-	    "timeout:i" => \( my $timeout = 5 ), # TODO assert positive
-	    "code:s" => \( my $code = STACKDUMP ),
-	    "force" => \( my $force ),
-	    "verbose" => \$DEBUG,
-	    help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
-	    man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
-	) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
+    my $pid;
+    GetOptions(
+        # TODO assert positive
+        "pid:i" => sub {
+            $pid = $_[1] || pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
+            $EOF = "END $pid-$PROCESS_ID";
+            return;
+        },
+        # TODO assert positive
+        "timeout:i" => \( my $timeout = 5 ),
+        "code:s" => \( my $code = STACKDUMP ),
+        "force" => \( my $force ),
+        "verbose" => \$DEBUG,
+        "signals!" => \( ( my $signals = 1) && require Term::ReadKey ),
+        help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
+        man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
+    ) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
 
-	# Try *really hard* to find a GDB binary.
-	my $gdb = which("gdb") || first { -x $_ } (
+    # Try *really hard* to find a GDB binary.
+    my $gdb = which("gdb") || first { -x $_ } (
         which("gdb"),
         "/usr/bin/gdb",
         "/usr/local/bin/gdb" ,
@@ -99,19 +182,15 @@ sub get_parameters {
         catfile( $ENV{HOMEBREW_ROOT}, "bin/gdb" ),
     );
 
-	unless ( $gdb ) {
-	    fatal("A usable GDB could not be found on the system.");
-	}
+    unless ( $gdb ) {
+        fatal("A usable GDB could not be found on the system.");
+    }
 
-	if (! $pid) {
-	    pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
-	}
-
-	if (! $force && index($code, '"') > -1) {
+    if (! $force && index($code, '"') > -1) {
         fatal("Double quotation marks are not allowed in supplied code. Use --force to override.");
     }
 
-	return ( $pid, $code, $timeout, $force, $gdb );
+    return ( $pid, $code, $timeout, $force, $signals, $gdb );
 }
 
 # Make sure that the supplied code compiles.
@@ -138,13 +217,13 @@ sub self_test_code {
             $exitcode,
         ));
     }
-    
+
     return debug("Compilation output: $combinedoutput");
 }
 
 local $OUTPUT_AUTOFLUSH = 1;
 
-my ( $pid, $code, $timeout, $force, $gdb ) = get_parameters();
+my ( $pid, $code, $timeout, $force, $signals, $gdb ) = get_parameters();
 
 # Make the tempdirs look at least somewhat meaningful on the filesystem.
 my $dir = tempdir(
@@ -159,35 +238,85 @@ self_test_code($code, $dir) unless $force;
 
 my $fifo = catfile( $dir, "communication_pipe" );
 mkfifo($fifo, 0700) or fatal("Could not make FIFO: $OS_ERROR");
+sysopen(my $readhandle, $fifo, O_RDONLY | O_NONBLOCK) or fatal("Could not open FIFO for reading: $OS_ERROR");
 
-open (my $readhandle, "+<", $fifo) or fatal("Could not open FIFO for reading");
-
-my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, $pid, $PROCESS_ID));
+my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, $EOF));
 
 # Add slashes to the ends of newlines so GDB understands it as a multiline statement.
 $inject =~ s/\n/\\\n/g;
 
-my @command = ( $gdb, "-quiet", "-p", $pid, map { ("-ex", $_) } GDBLINES, $inject, "detach", "Quit");
+my @command = (
+    $gdb,
+    "-quiet",
+    "-p",
+    $pid,
+    ( map { ("-ex", $_) } @{+GDBLINES}, $inject, "detach", "Quit" ),
+);
 
-my $runcmd = $DEBUG ? \&Capture::Tiny::tee : \&Capture::Tiny::capture;
-my ( $stdout, $stderr ) = $runcmd->(sub { return system(@command); });
+my $runcmd = $DEBUG ? \&tee : \&capture_only_stdout_visible;
+
+my $fork;
+my $skip;
+my ( $stdout, $stderr ) = $runcmd->(sub {
+    $fork = IPC::Run::start(\@command);
+    my $sent = -1;
+    my $gdbtimeout = $timeout;
+    while ( $gdbtimeout > 0 && $fork->pumpable ) {
+        if ( prompt_for_kill($pid, $sent++) ) {
+            $skip = 1;
+        } elsif ( ! $skip ) {
+            $gdbtimeout -= poll_sleep();
+        } else {
+            # Prevent an extra long-sleep while any sent signals are processed
+            # by doing a short sleep here.
+            sleep 0.02;
+            $skip = 0;
+        }
+    }
+    return;
+});
+
+if ( $timeout ) {
+    $fork->finish;
+} else {
+    $fork->kill_kill(grace => 5);
+    $fork->finish;
+    fatal("GDB execution timed out. Captured stdout:\n$stdout\nCaptured stderr:\n$stderr");
+}
 
 debug(sprintf("GDB exited with status %d", $CHILD_ERROR >> 8));
 
-if ( grep { index($stderr, $_) > -1} GDB_FAILURE_STRINGS ) {
-    fatal("Error injecting code:\n$stderr");
+if ( grep { index($stderr, $_) > -1} @{+GDB_FAILURE_STRINGS} ) {
+    fatal("Error injecting code. Captured stdout:\n$stdout\nCaptured stderr:\n$stderr");
 }
 
-my $select = IO::Select->new;
-$select->add($readhandle);
-unless ( $select->can_read($timeout) ) {
-    fatal("Could not get debug information within $timeout seconds.");
+# In signals mode, log which prompting phase we're at.
+my $log = $signals ? \&info : \&debug;
+$log->("Injected code; waiting for stack output...");
+
+my $data = "";
+my $sent = -1;
+while (
+    $timeout > 0
+    && index($data, $EOF, length($data) - length($EOF) - 1) == -1
+    && -p $fifo
+) {
+    my $chunk;
+    if ( defined ( my $read = sysread($readhandle, $chunk, 1024) ) ) {
+        if ( $read ) {
+            # Greedily read so long as there's data in the pipe.
+            $data .= $chunk;
+        } elsif ( ! ( $signals && prompt_for_kill($pid, $sent++) ) ) {
+            # Emulate select()-like waiting if we didn't issue a kill.
+            $timeout -= poll_sleep();
+        }
+    } else {
+        fatal("Error while reading from FIFO: $OS_ERROR\n\nGot data: $data");
+    }
 }
 
-my $line;
-while ( ( $line = trim(<$readhandle>) ) && $line ne "END $pid-$PROCESS_ID" ) {
-    print "$line\n";
-}
+debug("Got data:");
+print "\n$data\n";
 
 __END__
 
@@ -248,7 +377,7 @@ Bypass sanity checks and restrictions on the content of C<CODE>.
 
 =item B<--timeout SECONDS>
 
-Number of seconds to wait until C<PID> runs C<CODE>. If the timeout is exceeded (usually because C<PID> is in the middle of a blocking system call), C<inject.pl> gives up. 
+Number of seconds to wait until C<PID> runs C<CODE>. If the timeout is exceeded (usually because C<PID> is in the middle of a blocking system call), C<inject.pl> gives up.
 
 Defaults to 5.
 
