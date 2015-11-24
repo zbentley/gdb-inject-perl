@@ -34,7 +34,7 @@ use constant {
         "c",
         "delete breakpoints",
     ],
-    TEMPLATE1 => q/{
+    TEMPLATE => q/{
         local $_;
         local $@;
         local $!;
@@ -213,7 +213,6 @@ sub get_parameters {
 
     # Try *really hard* to find a GDB binary.
     my $gdb = which("gdb") || first { -x $_ } (
-        which("gdb"),
         "/usr/bin/gdb",
         "/usr/local/bin/gdb" ,
         "/bin/gdb",
@@ -244,7 +243,7 @@ sub get_parameters {
 # Make sure that the supplied code compiles.
 sub self_test_code {
     my ( $code, $dir ) = @_;
-    my $inject = sprintf(TEMPLATE1, "/dev/null", $code, 0, $PROCESS_ID);
+    my $inject = sprintf(TEMPLATE, "/dev/null", $code, 0, $PROCESS_ID);
 
     debug("Validating code to be injected. Generated code:\n$inject\n");
 
@@ -286,7 +285,7 @@ my $fifo = catfile( $dir, "communication_pipe" );
 mkfifo($fifo, 0700) or fatal("Could not make FIFO: $OS_ERROR");
 sysopen(my $readhandle, $fifo, O_RDONLY | O_NONBLOCK) or fatal("Could not open FIFO for reading: $OS_ERROR");
 
-my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, end($pid)));
+my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE, $fifo, $code, end($pid)));
 
 # Add slashes to the ends of newlines so GDB understands it as a multiline statement.
 $inject =~ s/\n/\\\n/g;
