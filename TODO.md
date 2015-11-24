@@ -15,3 +15,4 @@
 - Execute code from commandline or from file.
 - Tablify signal list.
 - Stop timeout countdowns when users start entering signals to send? Restart them instead?
+- Look into Devel::GDB.

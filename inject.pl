@@ -58,11 +58,13 @@ use constant {
         require Carp;
     }
     print $fh Carp::longmess('DEBUG');/,
-    # Enums
+    # Enums:
     NUMBER => 1,
     NAME => 2,
     ORDER => 3,
 };
+
+sub prompt_for_kill ($$);
 
 my %sig;
 sub signals_by {
@@ -92,20 +94,20 @@ sub poll_sleep {
 
 # Logging functions to deliniate between output from this script and output from
 # the commands it runs.
-sub debug {
+sub debug ($) {
     print logline(@_) if $DEBUG;
     return;
 }
 
-sub info {
+sub info ($) {
     print logline(@_);
 }
 
-sub fatal {
+sub fatal ($) {
     die logline(@_);
 }
 
-sub logline {
+sub logline ($) {
     my ( $msg ) = @_;
     return sprintf(
         "[%s] %s\n",
@@ -114,7 +116,7 @@ sub logline {
     );
 }
 
-sub prompt_for_kill {
+sub prompt_for_kill ($$) {
     my ( $pid, $sent ) = @_;
     my $returnvalue;
     unless ( $sent ) {
@@ -146,31 +148,65 @@ sub prompt_for_kill {
     return $returnvalue;
 }
 
-sub capture_only_stdout_visible  {
+sub capture_only_stdout_visible ($$$) {
     my ( $code, $out, $err ) = @_;
     $out = tee_stdout { $err = capture_stderr(\&{$code}) };
     return ( $out, $err );
 }
 
+sub run_command ($$$$@) {
+    my ( $pid, $runner, $timeout, $prog ) = splice(@_, 0, 4);
+    my @args = @_;
+    my $fork;
+    my $skip;
+    my ( $stdout, $stderr ) = $runner->(sub {
+        $fork = IPC::Run::start([ $prog, @args ]);
+        my $sent = -1;
+        while ( $timeout > 0 && $fork->pumpable ) {
+            if ( $pid && prompt_for_kill($pid, $sent++) ) {
+                $skip = 1;
+            } elsif ( ! $skip ) {
+                $timeout -= poll_sleep();
+            } else {
+                # Prevent an extra long-sleep while any sent signals are processed
+                # by doing a short sleep here.
+                sleep 0.02;
+                $skip = 0;
+            }
+        }
+
+        return debug(sprintf("%s exited with status %d", $prog, $CHILD_ERROR >> 8));
+    });
+
+    if ( $timeout ) {
+        $fork->finish;
+    } else {
+        $fork->kill_kill(grace => 5);
+        $fork->finish;
+        fatal("Execution of $prog timed out. Captured stdout:\n$stdout\nCaptured stderr:\n$stderr");
+    }
+
+    if ( grep { index($stderr, $_) > -1} @{+GDB_FAILURE_STRINGS} ) {
+        fatal("Error running $prog.\nCaptured stdout:\n$stdout\nCaptured stderr:\n$stderr");
+    }
+    return;
+}
+
+sub end ($) {
+    return "END $_[0]-$PROCESS_ID";
+}
+
 sub get_parameters {
-    my ( $pid, $signals );
+    # my $pid;
     GetOptions(
         # TODO assert positive
-        "pid:i" => sub {
-            $pid = $_[1] || pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
-            $EOF = "END $pid-$PROCESS_ID";
-            return;
-        },
+        "pid:i" => \ ( my $pid ),
         # TODO assert positive
         "timeout:i" => \( my $timeout = 5 ),
         "code:s" => \( my $code = STACKDUMP ),
         "force" => \( my $force ),
         "verbose" => \$DEBUG,
-        "signals!" => sub {
-            $signals = $_[1]; 
-            require Term::ReadKeyd if $signals;
-            return;
-        },
+        "signals!" => \( my $signals = 1 ),
         help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
         man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
     ) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
@@ -185,6 +221,14 @@ sub get_parameters {
         catfile( $ENV{HOMEBREW_ROOT}, "gdb" ),
         catfile( $ENV{HOMEBREW_ROOT}, "bin/gdb" ),
     );
+
+    if ( $signals ) {
+        require Term::ReadKey;
+    }
+
+    unless ( $pid ) {
+        pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
+    }
 
     unless ( $gdb ) {
         fatal("A usable GDB could not be found on the system.");
@@ -242,55 +286,21 @@ my $fifo = catfile( $dir, "communication_pipe" );
 mkfifo($fifo, 0700) or fatal("Could not make FIFO: $OS_ERROR");
 sysopen(my $readhandle, $fifo, O_RDONLY | O_NONBLOCK) or fatal("Could not open FIFO for reading: $OS_ERROR");
 
-my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, $EOF));
+my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE1, $fifo, $code, end($pid)));
 
 # Add slashes to the ends of newlines so GDB understands it as a multiline statement.
 $inject =~ s/\n/\\\n/g;
 
-my @command = (
+run_command(
+    $signals ? $pid : undef,
+    $DEBUG ? \&tee : \&capture_only_stdout_visible,
+    $timeout,
     $gdb,
     "-quiet",
     "-p",
     $pid,
     ( map { ("-ex", $_) } @{+GDBLINES}, $inject, "detach", "Quit" ),
 );
-
-my $runcmd = $DEBUG ? \&tee : \&capture_only_stdout_visible;
-
-my $fork;
-my $skip;
-my ( $stdout, $stderr ) = $runcmd->(sub {
-    $fork = IPC::Run::start(\@command);
-    my $sent = -1;
-    my $gdbtimeout = $timeout;
-    while ( $gdbtimeout > 0 && $fork->pumpable ) {
-        if ( $signals && prompt_for_kill($pid, $sent++) ) {
-            $skip = 1;
-        } elsif ( ! $skip ) {
-            $gdbtimeout -= poll_sleep();
-        } else {
-            # Prevent an extra long-sleep while any sent signals are processed
-            # by doing a short sleep here.
-            sleep 0.02;
-            $skip = 0;
-        }
-    }
-    return;
-});
-
-if ( $timeout ) {
-    $fork->finish;
-} else {
-    $fork->kill_kill(grace => 5);
-    $fork->finish;
-    fatal("GDB execution timed out. Captured stdout:\n$stdout\nCaptured stderr:\n$stderr");
-}
-
-debug(sprintf("GDB exited with status %d", $CHILD_ERROR >> 8));
-
-if ( grep { index($stderr, $_) > -1} @{+GDB_FAILURE_STRINGS} ) {
-    fatal("Error injecting code. Captured stdout:\n$stdout\nCaptured stderr:\n$stderr");
-}
 
 # In signals mode, log which prompting phase we're at.
 my $log = $signals ? \&info : \&debug;
@@ -300,7 +310,7 @@ my $data = "";
 my $sent = -1;
 while (
     $timeout > 0
-    && index($data, $EOF, length($data) - length($EOF) - 1) == -1
+    && index($data, end($pid), length($data) - length(end($pid)) - 1) == -1
     && -p $fifo
 ) {
     my $chunk;
