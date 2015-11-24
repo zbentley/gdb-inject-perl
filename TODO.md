@@ -16,3 +16,5 @@
 - Tablify signal list.
 - Stop timeout countdowns when users start entering signals to send? Restart them instead?
 - Look into Devel::GDB.
+- Document --signals switch and associated functionality.
+- Document updated dependencies.
