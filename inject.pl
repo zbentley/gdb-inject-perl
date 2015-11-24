@@ -13,11 +13,12 @@ use File::Which qw( which );
 use Getopt::Long qw( GetOptions );
 use IPC::Run ();
 use List::Util qw( first );
+use Memoize;
 use Pod::Usage qw( pod2usage );
 use POSIX qw( mkfifo );
 use Time::HiRes ();
 
-my ( $DEBUG, $EOF );
+my $DEBUG;
 local $OUTPUT_AUTOFLUSH = 1;
 
 use constant {
@@ -58,28 +59,19 @@ use constant {
         require Carp;
     }
     print $fh Carp::longmess('DEBUG');/,
-    # Enums:
-    NUMBER => 1,
-    NAME => 2,
-    ORDER => 3,
 };
 
-sub prompt_for_kill ($$);
+sub signals_by_order () { return split(' ', $Config{sig_name}); }
+memoize('signals_by_order');
 
-my %sig;
-sub signals_by {
-    $sig{RAW} ||= [ split(' ', $Config{sig_name}) ];
+sub signals_by_name () { return map { $_ => 1 } signals_by_order(); }
+memoize('signals_by_name');
 
-    if ( $_[0] == NUMBER ) {
-        return $sig{NUM} ||= { map { $_ => $sig{RAW}->[$_] } (1..scalar(@{$sig{RAW}}) - 1) };
-    } elsif ( $_[0] == NAME ) {
-        return $sig{NAME} ||= { map { $_ => 1 } @{$sig{RAW} } };
-    } elsif ( $_[0] == ORDER ) {
-        return $sig{RAW};
-    } else {
-        fatal("Invalid argument: $_[0]");
-    }
+sub signals_by_number () {
+    my @byorder = signals_by_order();
+    return map { $_ => $byorder[$_] } (1..scalar(@byorder) - 1);
 }
+memoize('signals_by_number');
 
 sub trim ($) {
     my $str = shift || "";
@@ -87,25 +79,15 @@ sub trim ($) {
     return $str;
 }
 
-sub poll_sleep {
-    Time::HiRes::sleep(0.25);
-    return 0.25;
-}
+sub poll_sleep () { return Time::HiRes::sleep(0.25) ? 0.25 : 0; }
 
 # Logging functions to deliniate between output from this script and output from
 # the commands it runs.
-sub debug ($) {
-    print logline(@_) if $DEBUG;
-    return;
-}
+sub debug ($) { return $DEBUG ? print logline(@_) : undef; }
 
-sub info ($) {
-    print logline(@_);
-}
+sub info ($) { return print logline(@_); }
 
-sub fatal ($) {
-    die logline(@_);
-}
+sub fatal ($) { die logline(@_); }
 
 sub logline ($) {
     my ( $msg ) = @_;
@@ -116,6 +98,7 @@ sub logline ($) {
     );
 }
 
+sub prompt_for_kill ($$);
 sub prompt_for_kill ($$) {
     my ( $pid, $sent ) = @_;
     my $returnvalue;
@@ -123,11 +106,13 @@ sub prompt_for_kill ($$) {
         info("Press a number key to send a signal to $pid. Press 'l' or 'L' to list signals.");
     }
     if ( my $key = uc(trim(Term::ReadKey::ReadKey(-1))) ) {
-        my $bynum = signals_by(NUMBER);
-        if ( $bynum->{$key} ) {
-            $key = $bynum->{$key};
+        my %signals = signals_by_number;
+        if ( $signals{$key} ) {
+            $key = $signals{$key};
         }
-        if ( exists signals_by(NAME)->{$key} ) {
+
+        %signals = signals_by_name();
+        if ( exists $signals{$key} ) {
             kill($key, $pid) or fatal("Kill failed: $OS_ERROR");
             info("Kill $key sent to $pid");
             $returnvalue = 1;
@@ -137,7 +122,7 @@ sub prompt_for_kill ($$) {
             }
             my $num = 0;
             print "Number:  Name:\n";
-            foreach my $signal (@{signals_by(ORDER)}) {
+            foreach my $signal (signals_by_order()) {
                 print ++$num . "\t$signal\n";
             }
             if ( $key ne "L" ) {
@@ -192,11 +177,10 @@ sub run_command ($$$$@) {
     return;
 }
 
-sub end ($) {
-    return "END $_[0]-$PROCESS_ID";
-}
+sub end ($) { return "END $_[0]-$PROCESS_ID"; }
+memoize('end'); # Presumes that only one pid will be handled per script invocation.
 
-sub get_parameters {
+sub get_parameters () {
     # my $pid;
     GetOptions(
         # TODO assert positive
@@ -241,7 +225,7 @@ sub get_parameters {
 }
 
 # Make sure that the supplied code compiles.
-sub self_test_code {
+sub self_test_code ($$) {
     my ( $code, $dir ) = @_;
     my $inject = sprintf(TEMPLATE, "/dev/null", $code, 0, $PROCESS_ID);
 
