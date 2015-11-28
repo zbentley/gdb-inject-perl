@@ -150,7 +150,7 @@ Signals can be entered by number or name, case-insensitive. Pressing "L" trigger
 # FAQ
 
 ### It doesn't work; it just says "Attaching to process". What gives?
-Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [Signals](#Signals) for more info. If you don't want to use signals, try `strace` and friends.
+Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [Signals](#signals) for more info. If you don't want to use signals, try `strace` and friends.
 
 ### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
 You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gnat_ugn_unw/Codesigning-the-Debugger.html).
