@@ -113,13 +113,14 @@ sub prompt_for_kill ($$) {
         %signals = signals_by_name();
         if ( exists $signals{$key} ) {
             kill($key, $pid) or fatal("Kill failed: $OS_ERROR");
-            info("Kill $key sent to $pid");
+            info("Signal $key sent to $pid");
             $returnvalue = 1;
         } else {
             if ( $key ne "L" ) {
                 info("Invalid entry. Please enter a number or signal name in the following listing:");
             }
             my $num = 0;
+
             print "Number:  Name:\n";
             foreach my $signal (signals_by_order()) {
                 print ++$num . "\t$signal\n";
@@ -294,7 +295,7 @@ my $data = "";
 my $sent = -1;
 while (
     $timeout > 0
-    && index($data, end($pid), length($data) - length(end($pid)) - 1) == -1
+    && index($data, end($pid), length($data) - length(end($pid)) - 1) < 0
     && -p $fifo
 ) {
     my $chunk;
@@ -313,12 +314,15 @@ while (
 
 debug("Got data:");
 print "\n$data\n";
+exit(0);
 
 __END__
 
 =head1 NAME
 
-inject.pl - Inject code into a running Perl process, using GDB. Dangerous, but useful as a fast, simple way to get debug info.
+inject.pl - Inject code into a running Perl process, using GDB. Dangerous, but useful as a fast and simple way to get debug info.
+
+See L<https://github.com/zbentley/gdb-inject-perl>.
 
 =head1 SYNOPSIS
 
@@ -326,23 +330,24 @@ To dump the call stack of a running process:
 
     # Run something in the background that has a particular call stack:
 
-    perl -e 'sub Foo { my $stuff = shift; eval $stuff; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &
-    inject.pl --pid $!
+    ~> perl -e 'sub Foo { my $stuff = shift; eval $stuff; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &
+    [1] 1234
+    ~> inject.pl --pid 1234
 
-    # DEBUG at (eval 1) line 1.
-    # eval 'while (1) { sleep 1; }
-    # ;' called at -e line 1
-    # main::Foo(undef) called at -e line 1
-    # main::Bar('while (1) { sleep 1; }') called at -e line 1
-    # eval {...} called at -e line 1
+    DEBUG at (eval 1) line 1.
+    eval 'while (1) { sleep 1; }
+    ;' called at -e line 1
+    main::Foo(undef) called at -e line 1
+    main::Bar('while (1) { sleep 1; }') called at -e line 1
+    eval {...} called at -e line 1
 
 To run arbitrary code in a running process:
 
-    inject.pl --pid <SOMEPID> --code 'print STDERR qq{FOOO $$}; sleep 1;'
-    # FOOO <SOMEPID> # printed from other process
+    ~> inject.pl --pid 1234 --code 'print STDERR qq{FOOO $$}; sleep 1;'
+    FOOO 1234 # printed from other process
 
-    inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
-    # FOOO <SOMEPID> # printed from gdb-inject-perl
+    ~> inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
+    FOOO 6789 # printed from gdb-inject-perl
 
 
 =head1 OPTIONS
@@ -351,31 +356,37 @@ To run arbitrary code in a running process:
 
 =item B<--pid PID>
 
-Process ID of the Perl process to inject code into. PID can be any kind of Perl process: embedded, mod_perl, simple script etc.
+Process ID of the Perl process to inject code into. C<PID> can be any kind of Perl process: embedded, mod_perl, simple script, etc.
 
 This option is required.
 
 =item B<--code CODE>
 
-String of code that will be injected into the Perl process at PID and run. This code will have access to a special file handle, $fh, which connects it to inject.pl. When $fh is written to, the output will be returned by inject.pl. If C<CODE> is omitted, it defaults to printing the value of L<Carp::longmess> to $fh.
+String of code that will be injected into the Perl process at C<PID> and run. This code will have access to a special file handle, C<$fh>, which connects it to C<inject.pl>. When C<$fh> is written to, the output will be returned by C<inject.pl>. If C<CODE> is omitted, it defaults to printing the value of L<Carp::longmess|https://metacpan.org/pod/Carp> to C<$fh>.
 
 C<CODE> should not perform complex alterations or change the state of the program being attached to.
 
-C<CODE> may not contain double quotation marks or Perl code that does not compile with L<strict> and L<warnings>. To bypass these restrictions, use --force.
-
-=item B<--verbose>
-
-Show all GDB output in addition to values captured from the process at C<PID>.
+C<CODE> may not contain double quotation marks or Perl code that does not compile with L<strict|hhttps://metacpan.org/pod/strict> and L<warnings|https://metacpan.org/pod/warnings>. To bypass these restrictions, use C<--force>.
 
 =item B<--force>
 
 Bypass sanity checks and restrictions on the content of C<CODE>.
+
+=item B<--[no]signals>
+
+Enable or disable the option to send signals to the process at C<PID>. If C<--signals> is enabled, once C<inject.pl> has injected code into the process at C<PID>, the user will be prompted to send signals to C<PID> in order to interrupt any blocking system calls and force C<CODE> to be run. See L</Signals> for more info.
+
+Defaults to enabled. If L<Term::ReadKey|https://metacpan.org/pod/Term::ReadKey> is not installed on your system, disabling signals via C<--nosignals> bypasses thie requirement for that module.
 
 =item B<--timeout SECONDS>
 
 Number of seconds to wait until C<PID> runs C<CODE>. If the timeout is exceeded (usually because C<PID> is in the middle of a blocking system call), C<inject.pl> gives up.
 
 Defaults to 5.
+
+=item B<--verbose>
+
+Show all GDB output in addition to values captured from the process at C<PID>.
 
 =item B<--help>
 
@@ -389,10 +400,30 @@ Show manpage/perldoc.
 
 =head1 DESCRIPTION
 
-C<inject.pl> is a script that uses GDB to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
+C<inject.pl> is a script that uses L<gdb|http://linux.die.net/man/1/gdb> to attach to a running Perl process, and injects in a perl "eval" call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
-C<inject.pl> is incredibly dangerous. It works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it B<does> modify anything, the interpreter might not detect state changes correctly.
+=head2 Caveats
+
+B<C<inject.pl> is incredibly dangerous>. It works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it I<does> modify anything, the interpreter might not detect state changes correctly.
 
 C<inject.pl> is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
+
+=head2 Signals
+
+Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. L<C<sleep>|http://linux.die.net/man/3/sleep>). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, C<inject.pl> prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
+
+    ~> inject.pl --pid 1234
+    [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
+    int
+    [inject.pl] Signal SIGINT sent to 1234
+
+    # Signals can also be entered by number:
+    [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
+    15
+    [inject.pl] Signal SIGTERM sent to 1234
+
+Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of C<kill -l>.
+
+B<Note:> the behavior of a target process after it has been signalled is I<even more> unknown than its behavior when running injected code without signals. While C<inject.pl> tries to run the injected code before a process shuts down, signalling a target process often results in its termination immediately after running C<CODE>. Also, since C<inject.pl> uses the target process's internal Perl signal handling check as the attach point for the injected code, it is I<not> guaranteed that any internal (safe or unsafe) signal handlers already installed in the target process will run when it is signalled by C<inject.pl>. 
 
 =cut
