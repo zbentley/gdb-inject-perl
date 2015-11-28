@@ -6,8 +6,6 @@
 	- Placeholders for project and script name.
 	- Deduplication between pod sections and README.
 	- Interpolation of longmess so as not to need Carp?
-- Fix POD external links.
-- Fix README commandline options documentation (separate markdown? pod2html?)
 - Enable/disable C backtrace.
 - Tests.
 - Thread support.
@@ -16,5 +14,3 @@
 - Tablify signal list.
 - Stop timeout countdowns when users start entering signals to send? Restart them instead?
 - Look into Devel::GDB.
-- Document --signals switch and associated functionality.
-- Document updated dependencies.
