@@ -8,7 +8,6 @@ use File::Spec::Functions qw( catfile splitpath );
 use File::Temp qw( tempdir );
 use Getopt::Long qw( GetOptions );
 use List::Util qw( first );
-use Memoize;
 use Pod::Usage qw( pod2usage );
 use POSIX qw( mkfifo );
 use Time::HiRes ();
@@ -60,18 +59,6 @@ use constant {
     print $fh Carp::longmess('DEBUG');/,
 };
 
-sub signals_by_order () { return split(' ', $Config::Config{sig_name}); }
-memoize('signals_by_order');
-
-sub signals_by_name () { return map { $_ => 1 } signals_by_order(); }
-memoize('signals_by_name');
-
-sub signals_by_number () {
-    my @byorder = signals_by_order();
-    return map { $_ => $byorder[$_] } (1..scalar(@byorder) - 1);
-}
-memoize('signals_by_number');
-
 sub trim ($) {
     my $str = shift || "";
     $str =~ s/^\s+|\s+$//g;
@@ -105,26 +92,23 @@ sub prompt_for_kill ($$) {
         info("Press a number key to send a signal to $pid. Press 'l' or 'L' to list signals.");
     }
     if ( my $key = uc(trim(Term::ReadKey::ReadKey(-1))) ) {
-        my %signals = signals_by_number;
-        if ( $signals{$key} ) {
-            $key = $signals{$key};
-        }
+        
+        my $sig = IPC::Signal::sig_num($key) ? $key : IPC::Signal::sig_name($key);
 
-        %signals = signals_by_name();
-        if ( exists $signals{$key} ) {
-            kill($key, $pid) or fatal("Kill failed: $OS_ERROR");
-            info("Signal $key sent to $pid");
+        if ( $sig && $sig ne "ZERO" ) {
+            kill($sig, $PROCESS_ID) or fatal("Kill failed: $OS_ERROR");
+            info("SIG$sig sent to $pid");
             $returnvalue = 1;
         } else {
             if ( $key ne "L" ) {
                 info("Invalid entry. Please enter a number or signal name in the following listing:");
             }
-            my $num = 0;
 
             print "Number:  Name:\n";
-            foreach my $signal (signals_by_order()) {
-                print ++$num . "\t$signal\n";
+            for ( my $num = 1; $num < scalar(@IPC::Signal::Sig_name); $num++) {
+                printf("%d\t%s\n", $num, $IPC::Signal::Sig_name[$num])
             }
+
             if ( $key ne "L" ) {
                 $returnvalue = prompt_for_kill($pid, 0);
             }
@@ -179,7 +163,6 @@ sub run_command ($$$$@) {
 }
 
 sub end ($) { return "END $_[0]-$PROCESS_ID"; }
-memoize('end'); # Presumes that only one pid will be handled per script invocation.
 
 sub get_parameters () {
     GetOptions(
@@ -216,7 +199,7 @@ sub get_parameters () {
 
     if ( $signals ) {
         require Term::ReadKey;
-        require Config;
+        require IPC::Signal;
     }
 
     if (! $force && index($code, '"') > -1) {
@@ -376,7 +359,7 @@ Bypass sanity checks and restrictions on the content of C<CODE>.
 
 Enable or disable the option to send signals to the process at C<PID>. If C<--signals> is enabled, once C<inject.pl> has injected code into the process at C<PID>, the user will be prompted to send signals to C<PID> in order to interrupt any blocking system calls and force C<CODE> to be run. See L</Signals> for more info.
 
-Defaults to enabled. If L<Term::ReadKey|https://metacpan.org/pod/Term::ReadKey> is not installed on your system, disabling signals via C<--nosignals> bypasses thie requirement for that module.
+Defaults to enabled. If L<Term::ReadKey|https://metacpan.org/pod/Term::ReadKey> or L<IPC::Signal|https://metacpan.org/pod/IPC::Signal> are not installed on your system, disabling signals via C<--nosignals> bypasses thie requirement for that module.
 
 =item B<--timeout SECONDS>
 
@@ -415,12 +398,12 @@ Sometimes, code is injected into a target process and not run. This is often bec
     ~> inject.pl --pid 1234
     [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
     int
-    [inject.pl] Signal SIGINT sent to 1234
+    [inject.pl] SIGINT sent to 1234
 
     # Signals can also be entered by number:
     [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
     15
-    [inject.pl] Signal SIGTERM sent to 1234
+    [inject.pl] SIGTERM sent to 1234
 
 Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of C<kill -l>.
 

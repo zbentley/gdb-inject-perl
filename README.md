@@ -107,6 +107,7 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 	- [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
 	- [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
 	- [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
+	- [`IPC::Signal](https://metacpan.org/pod/IPC::Signal) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
 - The following core CPAN modules (these are probably already available to you):
 	- Config
 	- English 
@@ -136,12 +137,12 @@ Sometimes, code is injected into a target process and not run. This is often bec
         ~> inject.pl --pid 1234
         [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
         int
-        [inject.pl] Signal SIGINT sent to 1234
+        [inject.pl] SIGINT sent to 1234
 
         # Signals can also be entered by number:
         [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
         15
-        [inject.pl] Signal SIGTERM sent to 1234
+        [inject.pl] SIGTERM sent to 1234
 
 Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of `kill -l`.
 
