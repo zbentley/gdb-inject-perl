@@ -3,20 +3,19 @@ use strict;
 use warnings;
 
 use English qw( -no-match-vars );
-
-use Capture::Tiny qw( tee tee_stdout capture_merged capture_stderr );
-use Config;
 use Fcntl;
 use File::Spec::Functions qw( catfile splitpath );
 use File::Temp qw( tempdir );
-use File::Which qw( which );
 use Getopt::Long qw( GetOptions );
-use IPC::Run ();
 use List::Util qw( first );
 use Memoize;
 use Pod::Usage qw( pod2usage );
 use POSIX qw( mkfifo );
 use Time::HiRes ();
+
+use IPC::Run ();
+use Capture::Tiny qw( tee tee_stdout capture_merged capture_stderr );
+use File::Which qw( which );
 
 my $DEBUG;
 local $OUTPUT_AUTOFLUSH = 1;
@@ -61,7 +60,7 @@ use constant {
     print $fh Carp::longmess('DEBUG');/,
 };
 
-sub signals_by_order () { return split(' ', $Config{sig_name}); }
+sub signals_by_order () { return split(' ', $Config::Config{sig_name}); }
 memoize('signals_by_order');
 
 sub signals_by_name () { return map { $_ => 1 } signals_by_order(); }
@@ -133,7 +132,8 @@ sub prompt_for_kill ($$) {
     return $returnvalue;
 }
 
-sub capture_only_stdout_visible ($$$) {
+# Capture both STDOUT and STDERR, but only print STDOUT while doing it.
+sub capture_only_stdout_visible ($) {
     my ( $code, $out, $err ) = @_;
     $out = tee_stdout { $err = capture_stderr(\&{$code}) };
     return ( $out, $err );
@@ -181,7 +181,6 @@ sub end ($) { return "END $_[0]-$PROCESS_ID"; }
 memoize('end'); # Presumes that only one pid will be handled per script invocation.
 
 sub get_parameters () {
-    # my $pid;
     GetOptions(
         # TODO assert positive
         "pid:i" => \ ( my $pid ),
@@ -191,9 +190,14 @@ sub get_parameters () {
         "force" => \( my $force ),
         "verbose" => \$DEBUG,
         "signals!" => \( my $signals = 1 ),
+
         help => sub { return pod2usage( -verbose => 1, -exitval => 0, ); },
         man => sub { return pod2usage( -verbose => 2, -exitval => 0, ); },
     ) or pod2usage( -exitval => 2, -msg => "Invalid options supplied.\n" );
+
+    unless ( $pid ) {
+        pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
+    }
 
     # Try *really hard* to find a GDB binary.
     my $gdb = which("gdb") || first { -x $_ } (
@@ -205,20 +209,17 @@ sub get_parameters () {
         catfile( $ENV{HOMEBREW_ROOT}, "bin/gdb" ),
     );
 
-    if ( $signals ) {
-        require Term::ReadKey;
-    }
-
-    unless ( $pid ) {
-        pod2usage( -exitval => 2, -msg => "Pid is required (must be a number).\n" );
-    }
-
     unless ( $gdb ) {
         fatal("A usable GDB could not be found on the system.");
     }
 
+    if ( $signals ) {
+        require Term::ReadKey;
+        require Config;
+    }
+
     if (! $force && index($code, '"') > -1) {
-        fatal("Double quotation marks are not allowed in supplied code. Use --force to override.");
+        fatal("Double quotation marks are not allowed in supplied code. Use '--force' to override.");
     }
 
     return ( $pid, $code, $timeout, $force, $signals, $gdb );
