@@ -37,27 +37,26 @@
 
 #### Dumping the call stack
 
-	# Run something in the background that has a particular call stack:
-    perl -e 'sub Foo { my $s = shift; eval $s; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &
-
-    inject.pl --pid $!
-        DEBUG at (eval 1) line 1.
-	    eval 'while (1) { sleep 1; }
-	    ;' called at -e line 1
-	    main::Foo(undef) called at -e line 1
-	    main::Bar('while (1) { sleep 1; }') called at -e line 1
-	    eval {...} called at -e line 1
+    # Run something in the background that has a particular call stack:
+    ~> perl -e 'sub Foo { my $stuff = shift; eval $stuff; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &    
+    [1] 1234
+    
+    ~> inject.pl --pid 1234
+    DEBUG at (eval 1) line 1.
+    eval 'while (1) { sleep 1; }
+    ;' called at -e line 1
+    main::Foo(undef) called at -e line 1
+    main::Bar('while (1) { sleep 1; }') called at -e line 1
+    eval {...} called at -e line 1
 
 #### Running arbitrary code
 
-	# There's nothing stopping you from using the captive process's STD* streams:
-    inject.pl --pid <SOMEPID> --code 'print STDERR qq{FOOO $$}; sleep 1;'
-        FOOO <SOMEPID> # printed from other process
-    
-    # The special file handle $fh is provided to your injected code as a
-    # way to communicate back to *gdb-inject-perl*:
-    inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
-        FOOO <SOMEPID> # printed from *gdb-inject-perl*
+    ~> inject.pl --pid 1234 --code 'print STDERR qq{FOOO $$}; sleep 1;'
+    FOOO 1234 # printed from other process
+
+    ~> inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
+    FOOO 6789 # printed from gdb-inject-perl
+
 
 #### Options
 - `--pid PID`
@@ -107,7 +106,7 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 	- [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
 	- [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
 	- [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
-	- [`IPC::Signal](https://metacpan.org/pod/IPC::Signal) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
+	- [`IPC::Signal`](https://metacpan.org/pod/IPC::Signal) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
 - The following core CPAN modules (these are probably already available to you):
 	- Config
 	- English 
