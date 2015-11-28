@@ -5,16 +5,16 @@
 
 - [Overview](#overview)
     - [Usage](#usage)
-        - [Setup](#setup)
-        - [Dumping the call stack](#dumping-the-call-stack)
-        - [Running arbitrary code](#running-arbitrary-code)
-        - [Safeguards and limitations](#safeguards-and-limitations)
-        - [Options](#options)
-        - [Signals](#signals)
+      - [Setup](#setup)
+      - [Dumping the call stack](#dumping-the-call-stack)
+      - [Running arbitrary code](#running-arbitrary-code)
+      - [Options](#options)
     - [Where/when can I use it?](#wherewhen-can-i-use-it)
     - [So what's the catch?](#so-whats-the-catch)
     - [Where/when _should_ I use it?](#wherewhen-_should_-i-use-it)
 - [System Requirements](#system-requirements)
+- [Safeguards and Limitations](#safeguards-and-limitations)
+- [Signals](#signals)
 - [FAQ](#faq)
     - [It doesn't work; it just says "Attaching to process". What gives?](#it-doesnt-work-it-just-says-attaching-to-process-what-gives)
     - [On OSX it times out after saying "Unable to find Mach task port for process-id ___"](#on-osx-it-times-out-after-saying-unable-to-find-mach-task-port-for-process-id-___)
@@ -31,11 +31,11 @@
 
 ### Usage
 
-##### Setup
+#### Setup
 1. First, identify the PID of the Perl process that you want to debug. In the below examples, it's a backgrounded process created at the top.
 2. Ensure you are running as a user with permissions to attach to the PID in question (either the user that owns the process or root, usually).
 
-##### Dumping the call stack
+#### Dumping the call stack
 
 	# Run something in the background that has a particular call stack:
     perl -e 'sub Foo { my $s = shift; eval $s; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &
@@ -48,7 +48,7 @@
 	    main::Bar('while (1) { sleep 1; }') called at -e line 1
 	    eval {...} called at -e line 1
 
-##### Running arbitrary code
+#### Running arbitrary code
 
 	# There's nothing stopping you from using the captive process's STD* streams:
     inject.pl --pid <SOMEPID> --code 'print STDERR qq{FOOO $$}; sleep 1;'
@@ -59,42 +59,22 @@
     inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
         FOOO <SOMEPID> # printed from *gdb-inject-perl*
 
-##### Safeguards and limitations
-There are a few basic safeguards used by *gdb-inject-perl*. 
-
-- Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
-	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
-- Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
-	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
-- If `gdb` cannot be found on your system, the script will not start.
-
-##### Options
-- `--pid PID`: Process ID of the Perl process to inject code into. `PID` can be any kind of Perl process: embedded, mod_perl, simple script, etc. This option is required.
+#### Options
+- `--pid PID`
+	- Process ID of the Perl process to inject code into. `PID` can be any kind of Perl process: embedded, mod_perl, simple script, etc. This option is required.
 - `--code CODE`: String of code that will be injected into the Perl process at `PID` and run. This code will have access to a special file handle, `$fh`, which connects it to `inject.pl`. When `$fh` is written to, the output will be returned by `inject.pl`. If `CODE` is omitted, it defaults to printing the value of [Carp::longmess](https://metacpan.org/pod/Carp) to `$fh`. `CODE` should not perform complex alterations or change the state of the program being attached to. `CODE` may not contain double quotation marks or Perl code that does not compile with [strict](hhttps://metacpan.org/pod/strict) and [warnings](https://metacpan.org/pod/warnings). To bypass these restrictions, use `--force`.
-- `--force`: Bypass sanity checks and restrictions on the content of `CODE`.
-- `--[no]signals`: Enable or disable the option to send signals to the process at `PID`. If `--signals` is enabled, once `inject.pl` has injected code into the process at `PID`, the user will be prompted to send signals to `PID` in order to interrupt any blocking system calls and force `CODE` to be run. See ["Signals"](#Signals) for more info. Defaults to enabled. If [Term::ReadKey](https://metacpan.org/pod/Term::ReadKey) is not installed on your system, disabling signals via `--nosignals` bypasses thie requirement for that module.
-- `--timeout SECONDS`: Number of seconds to wait until `PID` runs `CODE`. If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `inject.pl` gives up. Defaults to 5.
-- `--verbose`: Show all GDB output in addition to values captured from the process at `PID`.
-- `--help`: Show help message.
-- `--man`: Show manpage/perldoc.
-
-##### Signals
-
-Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
-
-        ~> inject.pl --pid 1234
-        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
-        int
-        [inject.pl] Signal SIGINT sent to 1234
-
-        # Signals can also be entered by number:
-        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
-        15
-        [inject.pl] Signal SIGTERM sent to 1234
-
-Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of `kill -l`.
-
-**Note:** the behavior of a target process after it has been signalled is _even more_ unknown than its behavior when running injected code without signals. While `inject.pl` tries to run the injected code before a process shuts down, signalling a target process often results in its termination immediately after running `CODE`. Also, since `inject.pl` uses the target process's internal Perl signal handling check as the attach point for the injected code, it is _not_ guaranteed that any internal (safe or unsafe) signal handlers already installed in the target process will run when it is signalled by `inject.pl`.
+- `--force`
+	- Bypass sanity checks and restrictions on the content of `CODE`.
+- `--[no]signals`
+	- Enable or disable the option to send signals to the process at `PID`. If `--signals` is enabled, once `inject.pl` has injected code into the process at `PID`, the user will be prompted to send signals to `PID` in order to interrupt any blocking system calls and force `CODE` to be run. See ["Signals"](#Signals) for more info. Defaults to enabled. If [Term::ReadKey](https://metacpan.org/pod/Term::ReadKey) is not installed on your system, disabling signals via `--nosignals` bypasses thie requirement for that module.
+- `--timeout SECONDS`
+	- Number of seconds to wait until `PID` runs `CODE`. If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `inject.pl` gives up. Defaults to 5.
+- `--verbose`
+	- Show all GDB output in addition to values captured from the process at `PID`.
+- `--help`
+	- Show help message.
+- `--man`
+	- Show manpage/perldoc.
 
 ### Where/when can I use it?
 This program only works on POSIX-like OSes on which GDB is installed. In practice, this includes most Linuxes, BSDs, and Solaris OSes out of the box. GDB [can be installed on OSX](http://ntraft.com/installing-gdb-on-os-x-mavericks/) and other operating systems as well.
@@ -140,10 +120,37 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 	- POSIX 
 	- Time::HiRes
 
+# Safeguards and Limitations
+There are a few basic safeguards used by *gdb-inject-perl*. 
+
+- Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
+	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
+- Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
+	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
+- If `gdb` cannot be found on your system, the script will not start.
+
+# Signals
+
+Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
+
+        ~> inject.pl --pid 1234
+        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
+        int
+        [inject.pl] Signal SIGINT sent to 1234
+
+        # Signals can also be entered by number:
+        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
+        15
+        [inject.pl] Signal SIGTERM sent to 1234
+
+Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of `kill -l`.
+
+**Note:** the behavior of a target process after it has been signalled is _even more_ unknown than its behavior when running injected code without signals. While `inject.pl` tries to run the injected code before a process shuts down, signalling a target process often results in its termination immediately after running `CODE`. Also, since `inject.pl` uses the target process's internal Perl signal handling check as the attach point for the injected code, it is _not_ guaranteed that any internal (safe or unsafe) signal handlers already installed in the target process will run when it is signalled by `inject.pl`.
+
 # FAQ
 
 ### It doesn't work; it just says "Attaching to process". What gives?
-Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). Try `strace` and friends.
+Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [Signals](#Signals) for more info. If you don't want to use signals, try `strace` and friends.
 
 ### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
 You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gnat_ugn_unw/Codesigning-the-Debugger.html).
