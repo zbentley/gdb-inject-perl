@@ -127,19 +127,19 @@ There are a few basic safeguards used by *gdb-inject-perl*.
 	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
 - Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
 	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
-- If `gdb` cannot be found on your system, the script will not start.
+- If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl inject.pl [options]`.
 
 # Signals
 
 Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
 
         ~> inject.pl --pid 1234
-        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
+        [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
         int
         [inject.pl] SIGINT sent to 1234
 
         # Signals can also be entered by number:
-        [inject.pl] Press a number key to send a signal to 1234\. Press 'l' or 'L' to list signals.
+        [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
         15
         [inject.pl] SIGTERM sent to 1234
 
@@ -149,24 +149,24 @@ Signals can be entered by number or name, case-insensitive. Pressing "L" trigger
 
 # FAQ
 
-### It doesn't work; it just says "Attaching to process". What gives?
-Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [Signals](#signals) for more info. If you don't want to use signals, try `strace` and friends.
+#### It doesn't work; it just says "Attaching to process". What gives?
+Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [signals](#signals) for more info. If you don't want to use signals, try `strace` and friends.
 
-### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
+#### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
 You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gnat_ugn_unw/Codesigning-the-Debugger.html).
 
-### I want to inject something that changes my running program's state. Can I?
+#### I want to inject something that changes my running program's state. Can I?
 Sure, but don't come crying to me when it segfaults your application.
 
-### I want to inject code into multiple places inside a process. Can I?
+#### I want to inject code into multiple places inside a process. Can I?
 Probably, but if you do, don't tell me how you pulled it off. It sounds like you need a [real](https://metacpan.org/pod/Devel::Trepan)[1] [debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod)[2].
 
-### Why not just use the Perl debugger/GDB directly?
-- You might not need it. *gdb-inject-perl* is intended for a much, much simpler use case than the [Perl debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod) (or the excellent [trepan](https://metacpan.org/pod/Devel::Trepan)): getting a little bit of context information out of a process that you might not know anything about.
+#### Why not just use the Perl debugger/GDB directly?
+- You might not need it. *gdb-inject-perl* is intended for a much, much simpler use case than the [Perl debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod) (or the excellent [Devel::Trepan](https://metacpan.org/pod/Devel::Trepan)): getting a little bit of context information out of a process that you might not know anything about.
 	- **Simplicity is paramount**: the person monitoring and/or killing a Perl process might not know how to use the Perl debugger; they might not know what Perl is. Consider the example of a support technician or administrator that finds a process that is hung and breaking an important service: with *gdb-inject-perl*, they can run a command, send its output to the developers that maintain the service, and kill it as the normally would: no Perl understanding required.
 - Debug symbols/Perl debugger support might not exist in your environment (certain embedded Perls, or bizarre system Perls). Even in those cases, the "caller" stack is usable for context information about a Perl process, and *gdb-inject-perl* can get it for you.
 
-### Why use FIFOs, and not use perl debugger's RemotePort functionality?
+#### Why use FIFOs, and not use perl debugger's RemotePort functionality?
 Something else might be using it. *gdb-inject-perl* is meant to be usable with minimal interference with other code running in a Perl process, _even other debuggers_.
 
 # Additional Resources
@@ -174,6 +174,7 @@ Something else might be using it. *gdb-inject-perl* is meant to be usable with m
 - Massive [presentation on various Perl debugging strategies, including this one](https://docs.google.com/presentation/d/1Lxk_YHUEV3k4dXJZlpsgUuph0PwmvpHbI8EX8Igy5rY/edit#slide=id.g11c288d8_0_35)
 - [Script that does the same thing, but for threaded perl](https://gist.github.com/p120ph37/2bf794a86eeab0445658)
 - [Devel::Trepan](https://metacpan.org/pod/Devel::Trepan)
+- [Devel::GDB](https://metacpan.org/pod/Devel::GDB)
 - The [Perl debugger](http://search.cpan.org/~arc/perl/pod/perldebug.pod)
 - [Enbugger](https://metacpan.org/pod/distribution/Enbugger/lib/Enbugger.pod)
 - [Zombie free linux with GDB](http://www.mattfiddles.com/computers/linux/zombie-slayer) (terrifying)
