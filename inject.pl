@@ -3,18 +3,20 @@ use strict;
 use warnings;
 
 use English qw( -no-match-vars );
+
+use Capture::Tiny qw( tee tee_stdout capture_merged capture_stderr );
+use Config;
 use Fcntl;
 use File::Spec::Functions qw( catfile splitpath );
 use File::Temp qw( tempdir );
+use File::Which qw( which );
 use Getopt::Long qw( GetOptions );
+use IPC::Run ();
 use List::Util qw( first );
 use Pod::Usage qw( pod2usage );
 use POSIX qw( mkfifo );
+use Term::ReadKey;
 use Time::HiRes ();
-
-use IPC::Run ();
-use Capture::Tiny qw( tee tee_stdout capture_merged capture_stderr );
-use File::Which qw( which );
 
 my $DEBUG;
 local $OUTPUT_AUTOFLUSH = 1;
@@ -92,11 +94,16 @@ sub prompt_for_kill ($$) {
         info("Press a number key to send a signal to $pid. Press 'l' or 'L' to list signals.");
     }
     if ( my $key = uc(trim(Term::ReadKey::ReadKey(-1))) ) {
-        
-        my $sig = IPC::Signal::sig_num($key) ? $key : IPC::Signal::sig_name($key);
+        my @numbers = split(qr/\s+/, $Config{sig_num});
+        my @names = split(qr/\s+/, $Config{sig_name});
+
+        my $sig = first { $_ eq $key } @names;
+        if ( ! $sig && ( my $idx = first { $key == $numbers[$_] } (0..scalar(@numbers) - 1) )) {
+            $sig = $names[$idx];
+        }
 
         if ( $sig && $sig ne "ZERO" ) {
-            kill($sig, $PROCESS_ID) or fatal("Kill failed: $OS_ERROR");
+            kill($sig, $pid) or fatal("Kill failed: $OS_ERROR");
             info("SIG$sig sent to $pid");
             $returnvalue = 1;
         } else {
@@ -105,8 +112,8 @@ sub prompt_for_kill ($$) {
             }
 
             print "Number:  Name:\n";
-            for ( my $num = 1; $num < scalar(@IPC::Signal::Sig_name); $num++) {
-                printf("%d\t%s\n", $num, $IPC::Signal::Sig_name[$num])
+            foreach my $cur (1..scalar(@names) - 1) {
+                 printf("%d\t%s\n", $numbers[$cur], $names[$cur]);
             }
 
             if ( $key ne "L" ) {
@@ -199,7 +206,6 @@ sub get_parameters () {
 
     if ( $signals ) {
         require Term::ReadKey;
-        require IPC::Signal;
     }
 
     if (! $force && index($code, '"') > -1) {
@@ -245,16 +251,23 @@ my $dir = tempdir(
     CLEANUP => 1,
     TMPDIR => 1,
 );
+chmod(0777, $dir) or fatal("Could not chmod temporary drectory $dir: $OS_ERROR");
 
 self_test_code($code, $dir) unless $force;
-
 # End validation section.
 
 my $fifo = catfile( $dir, "communication_pipe" );
-mkfifo($fifo, 0700) or fatal("Could not make FIFO: $OS_ERROR");
+# Make the FIFO with promiscuous permissions, since it's temporary and it's
+# better to be safe than sorry.
+mkfifo($fifo, 0777) or fatal("Could not make FIFO: $OS_ERROR");
+chmod(0777, $fifo) or fatal("Could not chmod FIFO: $OS_ERROR");
 sysopen(my $readhandle, $fifo, O_RDONLY | O_NONBLOCK) or fatal("Could not open FIFO for reading: $OS_ERROR");
 
-my $inject = sprintf(q{call Perl_eval_pv("%s", 0)}, sprintf(TEMPLATE, $fifo, $code, end($pid)));
+my $end = end($pid);
+my $inject = sprintf(
+    q{call Perl_eval_pv("%s", 0)},
+    sprintf(TEMPLATE, $fifo, $code, $end),
+);
 
 # Add slashes to the ends of newlines so GDB understands it as a multiline statement.
 $inject =~ s/\n/\\\n/g;
@@ -296,6 +309,7 @@ while (
 }
 
 debug("Got data:");
+$data =~ s/$end\s+//;
 print "\n$data\n";
 exit(0);
 
@@ -359,7 +373,7 @@ Bypass sanity checks and restrictions on the content of C<CODE>.
 
 Enable or disable the option to send signals to the process at C<PID>. If C<--signals> is enabled, once C<inject.pl> has injected code into the process at C<PID>, the user will be prompted to send signals to C<PID> in order to interrupt any blocking system calls and force C<CODE> to be run. See L</Signals> for more info.
 
-Defaults to enabled. If L<Term::ReadKey|https://metacpan.org/pod/Term::ReadKey> or L<IPC::Signal|https://metacpan.org/pod/IPC::Signal> are not installed on your system, disabling signals via C<--nosignals> bypasses thie requirement for that module.
+Defaults to enabled. If L<Term::ReadKey|https://metacpan.org/pod/Term::ReadKey> is not installed on your system, disabling signals via C<--nosignals> bypasses thie requirement for that module.
 
 =item B<--timeout SECONDS>
 

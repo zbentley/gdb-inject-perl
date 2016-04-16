@@ -9,7 +9,6 @@
 - Enable/disable C backtrace.
 - Tests.
 - Thread support.
-- Custom stack-dumping modules (must "can" longmess).
 - Execute code from commandline or from file.
 - Tablify signal list.
 - Stop timeout countdowns when users start entering signals to send? Restart them instead?

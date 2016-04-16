@@ -97,28 +97,26 @@ In short, it should not be used on a healthy process with important functionalit
 
 If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use *gdb-inject-perl* to get more information.
 
-# System Requirements
+# System Requirements and Dependencies
 - POSIX-ish OS.
 - Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
 - GDB installed.
 - The following non-core CPAN modules:
-	- [`File::Which`](https://metacpan.org/pod/File::Which)
-	- [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
-	- [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
-	- [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
-	- [`IPC::Signal`](https://metacpan.org/pod/IPC::Signal) (only needed if using the `--signals` switch; use `--nosignals` to skip this dependency)
-- The following core CPAN modules (these are probably already available to you):
-	- Config
-	- English 
-	- Fcntl
-	- File::Spec::Functions 
-	- File::Temp 
-	- Getopt::Long 
-	- List::Util 
-	- Memoize
-	- Pod::Usage 
-	- POSIX 
-	- Time::HiRes
+    - [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
+    - [`File::Which`](https://metacpan.org/pod/File::Which)
+    - [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
+    - [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey)
+- The following core CPAN modules (these are almost certainly installed with your Perl distribution):
+    - Config
+    - English
+    - Fcntl
+    - File::Spec::Functions
+    - File::Temp
+    - Getopt::Long
+    - List::Util
+    - Pod::Usage
+    - POSIX
+    - Time::HiRes
 
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 
