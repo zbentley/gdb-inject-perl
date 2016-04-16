@@ -37,26 +37,39 @@
 
 #### Dumping the call stack
 
+```bash
     # Run something in the background that has a particular call stack:
-    ~> perl -e 'sub Foo { my $stuff = shift; eval $stuff; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &    
+    ~> perl -e 'sub Foo {
+        my $stuff = shift; eval $stuff;
+    }
+
+    sub Bar {
+        Foo(@_);
+    };
+
+    eval {
+        Bar("while (1) { sleep 1; }");
+    };' &
     [1] 1234
     
+    # Inject code into the backgrounded process
     ~> inject.pl --pid 1234
-    DEBUG at (eval 1) line 1.
+    INJECT at (eval 1) line 1.
     eval 'while (1) { sleep 1; }
     ;' called at -e line 1
     main::Foo(undef) called at -e line 1
     main::Bar('while (1) { sleep 1; }') called at -e line 1
     eval {...} called at -e line 1
-
+```
 #### Running arbitrary code
 
+```bash
     ~> inject.pl --pid 1234 --code 'print STDERR qq{FOOO $$}; sleep 1;'
     FOOO 1234 # printed from other process
 
     ~> inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
     FOOO 6789 # printed from gdb-inject-perl
-
+```
 
 #### Options
 - `--pid PID`
@@ -102,21 +115,21 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 - Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
 - GDB installed.
 - The following non-core CPAN modules:
-    - [`Capture::Tiny`](https://metacpan.org/release/Capture-Tiny)
+    - [`Capture::Tiny`](https://metacpan.org/pod/Capture::Tiny)
     - [`File::Which`](https://metacpan.org/pod/File::Which)
     - [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
     - [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey)
 - The following core CPAN modules (these are almost certainly installed with your Perl distribution):
-    - Config
-    - English
-    - Fcntl
-    - File::Spec::Functions
-    - File::Temp
-    - Getopt::Long
-    - List::Util
-    - Pod::Usage
-    - POSIX
-    - Time::HiRes
+    - [`Config`](https://metacpan.org/pod/Config)
+    - [`English`](https://metacpan.org/pod/English)
+    - [`Fcntl`](https://metacpan.org/pod/Fcntl)
+    - [`File::Spec::Functions`](https://metacpan.org/pod/File::Spec::Functions)
+    - [`File::Temp`](https://metacpan.org/pod/File::Temp)
+    - [`Getopt::Long`](https://metacpan.org/pod/Getopt::Long)
+    - [`List::Util`](https://metacpan.org/pod/List::Util)
+    - [`Pod::Usage`](https://metacpan.org/pod/Pod::Usage)
+    - [`POSIX`](https://metacpan.org/pod/POSIX)
+    - [`Time::HiRes`](https://metacpan.org/pod/Time::HiRes)
 
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 

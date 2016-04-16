@@ -58,7 +58,7 @@ use constant {
     unless ( exists($INC{'Carp.pm'}) ) {
         require Carp;
     }
-    print $fh Carp::longmess('DEBUG');/,
+    print $fh Carp::longmess('INJECT');/,
 };
 
 sub trim ($) {
@@ -191,7 +191,7 @@ sub get_parameters () {
     }
 
     # Try *really hard* to find a GDB binary.
-    my $gdb = which("gdb") || first { -x $_ } (
+    my $gdb = which("gdb") || first { -x defined($_) ? $_ : "" } (
         "/usr/bin/gdb",
         "/usr/local/bin/gdb" ,
         "/bin/gdb",
@@ -205,6 +205,7 @@ sub get_parameters () {
     }
 
     if ( $signals ) {
+        fatal("Platform does not support signals; try using --nosignals instead") unless $Config{sig_num};
         require Term::ReadKey;
     }
 
@@ -252,6 +253,7 @@ my $dir = tempdir(
     TMPDIR => 1,
 );
 chmod(0777, $dir) or fatal("Could not chmod temporary drectory $dir: $OS_ERROR");
+debug("Using temp directory $dir");
 
 self_test_code($code, $dir) unless $force;
 # End validation section.
@@ -262,6 +264,7 @@ my $fifo = catfile( $dir, "communication_pipe" );
 mkfifo($fifo, 0777) or fatal("Could not make FIFO: $OS_ERROR");
 chmod(0777, $fifo) or fatal("Could not chmod FIFO: $OS_ERROR");
 sysopen(my $readhandle, $fifo, O_RDONLY | O_NONBLOCK) or fatal("Could not open FIFO for reading: $OS_ERROR");
+debug("Using FIFO $fifo");
 
 my $end = end($pid);
 my $inject = sprintf(
@@ -291,7 +294,7 @@ my $data = "";
 my $sent = -1;
 while (
     $timeout > 0
-    && index($data, end($pid), length($data) - length(end($pid)) - 1) < 0
+    && index($data, $end, length($data) - length($end) - 1) < 0
     && -p $fifo
 ) {
     my $chunk;
@@ -309,7 +312,9 @@ while (
 }
 
 debug("Got data:");
-$data =~ s/$end\s+//;
+if ( my $endmarker = index($data, $end)) {
+    $data = substr($data, $endmarker);
+}
 print "\n$data\n";
 exit(0);
 
@@ -325,13 +330,9 @@ See L<https://github.com/zbentley/gdb-inject-perl>.
 
 To dump the call stack of a running process:
 
-    # Run something in the background that has a particular call stack:
-
-    ~> perl -e 'sub Foo { my $stuff = shift; eval $stuff; } sub Bar { Foo(@_) }; eval { Bar("while (1) { sleep 1; }"); };' &
-    [1] 1234
     ~> inject.pl --pid 1234
 
-    DEBUG at (eval 1) line 1.
+    INJECT at (eval 1) line 1. # Current call stack of process 1234:
     eval 'while (1) { sleep 1; }
     ;' called at -e line 1
     main::Foo(undef) called at -e line 1
@@ -387,11 +388,11 @@ Show all GDB output in addition to values captured from the process at C<PID>.
 
 =item B<--help>
 
-Show help message.
+Show help message. For more detailed information and examples, use C<--man>.
 
 =item B<--man>
 
-Show manpage/perldoc.
+Show manpage/perldoc, including behavior description, caveats, examples, amd more.
 
 =back
 
@@ -404,6 +405,33 @@ C<inject.pl> is a script that uses L<gdb|http://linux.die.net/man/1/gdb> to atta
 B<C<inject.pl> is incredibly dangerous>. It works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it I<does> modify anything, the interpreter might not detect state changes correctly.
 
 C<inject.pl> is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
+
+=head2 Examples
+
+For a contrived example, run some Perl  in the background that has a particular call stack:
+
+    ~> perl -e 'sub Foo {
+        my $stuff = shift; eval $stuff;
+    }
+
+    sub Bar {
+        Foo(@_);
+    };
+
+    eval {
+        Bar("while (1) { sleep 1; }");
+    };' &
+    [1] 1234
+    
+Then use C<inject.pl> on the backgrounded process, and observe its call stack:
+
+    ~> inject.pl --pid 1234
+    DEBUG at (eval 1) line 1.
+    eval 'while (1) { sleep 1; }
+    ;' called at -e line 1
+    main::Foo(undef) called at -e line 1
+    main::Bar('while (1) { sleep 1; }') called at -e line 1
+    eval {...} called at -e line 1
 
 =head2 Signals
 
