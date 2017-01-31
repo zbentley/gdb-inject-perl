@@ -19,3 +19,8 @@ nytprof.out
 *.bs
 /_eumm/
 node_modules/
+/.GOPATH
+/bin
+/src
+/pkg
+/vendor
