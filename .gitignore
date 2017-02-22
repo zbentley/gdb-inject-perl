@@ -21,6 +21,7 @@ nytprof.out
 node_modules/
 /.GOPATH
 /bin
-/src
 /pkg
 /vendor
+/src
+/.idea
