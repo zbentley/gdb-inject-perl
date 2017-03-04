@@ -1,11 +1,11 @@
 ### TODO:
 
-- CPANify install, with deps.
 - Build system:
 	- Doctoc for README(s).
 	- Placeholders for project and script name.
-	- Deduplication between pod sections and README.
-	- Interpolation of longmess so as not to need Carp?
+- GDB test-run: dylib version errors, etc.
+- Document debug requirement.
+- Interpolation of longmess so as not to need Carp?
 - Enable/disable C backtrace.
 - Tests.
 - Thread support.

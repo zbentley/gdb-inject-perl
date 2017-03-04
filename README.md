@@ -80,7 +80,7 @@
 - `--[no]signals`
 	- Enable or disable the option to send signals to the process at `PID`. If `--signals` is enabled, once `inject.pl` has injected code into the process at `PID`, the user will be prompted to send signals to `PID` in order to interrupt any blocking system calls and force `CODE` to be run. See ["Signals"](#Signals) for more info. Defaults to enabled. If [Term::ReadKey](https://metacpan.org/pod/Term::ReadKey) is not installed on your system, disabling signals via `--nosignals` bypasses thie requirement for that module.
 - `--timeout SECONDS`
-	- Number of seconds to wait until `PID` runs `CODE`. If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `inject.pl` gives up. Defaults to 5.
+	- Number of seconds to wait until `PID` runs `CODE`. If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `inject.pl` gives up. Defaults to 5 seconds.
 - `--verbose`
 	- Show all GDB output in addition to values captured from the process at `PID`.
 - `--help`
@@ -112,34 +112,21 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 
 # System Requirements and Dependencies
 - POSIX-ish OS.
+    - OSX builds after Sierra are not compatible with this tool. TODO link dylib loader compat issues.
 - Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
 - GDB installed.
-- The following non-core CPAN modules:
-    - [`Capture::Tiny`](https://metacpan.org/pod/Capture::Tiny)
-    - [`File::Which`](https://metacpan.org/pod/File::Which)
-    - [`IPC::Run`](https://metacpan.org/pod/IPC::Run)
-    - [`Term::ReadKey`](https://metacpan.org/pod/Term::ReadKey)
-- The following core CPAN modules (these are almost certainly installed with your Perl distribution):
-    - [`Config`](https://metacpan.org/pod/Config)
-    - [`English`](https://metacpan.org/pod/English)
-    - [`Fcntl`](https://metacpan.org/pod/Fcntl)
-    - [`File::Spec::Functions`](https://metacpan.org/pod/File::Spec::Functions)
-    - [`File::Temp`](https://metacpan.org/pod/File::Temp)
-    - [`Getopt::Long`](https://metacpan.org/pod/Getopt::Long)
-    - [`List::Util`](https://metacpan.org/pod/List::Util)
-    - [`Pod::Usage`](https://metacpan.org/pod/Pod::Usage)
-    - [`POSIX`](https://metacpan.org/pod/POSIX)
-    - [`Time::HiRes`](https://metacpan.org/pod/Time::HiRes)
+- Root privileges (usually; unless you're injecting to a process you own)
+ 
 
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 
 
 - Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
 	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
-- Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
+- Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway, but it will almost certainly not work.
 	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
 - If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl inject.pl [options]`.
-
+- If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls).
 # Signals
 
 Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
