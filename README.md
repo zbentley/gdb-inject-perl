@@ -4,6 +4,7 @@
 
 
 - [Overview](#overview)
+    - [Installing](#installing)
     - [Usage](#usage)
       - [Setup](#setup)
       - [Dumping the call stack](#dumping-the-call-stack)
@@ -24,12 +25,21 @@
       - [Why not just use the Perl debugger/GDB directly?](#why-not-just-use-the-perl-debuggergdb-directly)
       - [Why use FIFOs, and not use perl debugger's RemotePort functionality?](#why-use-fifos-and-not-use-perl-debuggers-remoteport-functionality)
       - [Why is it written in Go, not Perl?](#why-is-it-written-in-go-not-perl)
+- [Building from Source](#building-from-source)
+- [Issues and Improvements](#issues-and-improvements)
 - [Additional Resources](#additional-resources)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 # Overview
 *gdb-inject-perl* is a script that uses [GDB](http://www.gnu.org/software/GDB/) to attach to a running Perl process, and execute code _inside that process_. It works by using the debugger to inject a Perl `eval` call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
+
+
+### Installing
+
+Binaries for download are available on the release page: [https://github.com/zbentley/gdb-inject-perl/releases](https://github.com/zbentley/gdb-inject-perl/releases).
+ 
+To build from source, see the "Building from Source" section of this document.
 
 ### Usage
 
@@ -194,6 +204,10 @@ Something else might be using it. *gdb-inject-perl* is meant to be usable with m
 `gdb-inject-perl` is a semi-standard [Go](https://golang.org/) program. It uses "evil" go internals in a limited way.
 
 It can be built with go 1.8. Once your `GOPATH` environment variable is properly configured, use [`glide`](https://github.com/Masterminds/glide) to install the required source dependencies via `glide install`. After that, the executable can be built via `go build` in the project root/over the scope of the `main.go` file.
+
+# Issues and Improvements
+
+Please report issues via the [GitHub issue tracker](https://github.com/zbentley/gdb-inject-perl/issues) for this project.
 
 # Additional Resources
 - Perlmonks [conversation about gdb-eval injection](http://www.perlmonks.org/?node_id=694095)
