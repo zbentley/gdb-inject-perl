@@ -7,7 +7,7 @@ import (
 	"os"
 	"github.com/zbentley/gdb-inject-perl/injector"
 	"strings"
-	_ "unsafe"
+	_ "unsafe" // For the signal enumeration trick.
 )
 
 func parseArgs(args []string) injector.CodeToInject {
@@ -16,9 +16,9 @@ func parseArgs(args []string) injector.CodeToInject {
 		pid     = app.Flag("pid", "ZBTODO timeout").Short('p').Required().Int()
 		debug   = app.Flag("debug", "ZBTODO timeout").Short('d').Bool()
 		timeout = app.Flag("timeout", "ZBTODO timeout").Short('t').Default("5s").Duration()
-		code    = app.Flag("code", "ZBTODO timeout").Short('c').Default("require Carp unless exists($INC{'Carp.pm'}); print $fh Carp::longmess('INJECT')").String()
+		code    = app.Flag("code", "ZBTODO timeout").Short('c').Default("require Carp unless exists($INC{'Carp.pm'}); local $Carp::MaxArgLen = 0; local $Carp::MaxArgNums = 0; print $fh Carp::longmess('INJECT')").String()
 		force   = app.Flag("force", "ZBTODO force").Short('f').Bool()
-		signals = app.Flag("signals", "ZBTODO signz").Short('s').Default("true").Bool()
+		signals = app.Flag("signals", "ZBTODO signz").Short('s').Default("false").Bool()
 		signalmap map[uint32]string
 	)
 	kingpin.MustParse(app.Parse(args))

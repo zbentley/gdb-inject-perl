@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"io"
 )
 
 const (
@@ -32,15 +33,16 @@ const (
             print $fh qq{%s\n};
         }
     };`
+	SIGNALHELP = "Type a case-insensitive signal name or number ('sigint', 'INT', and '2' are equivalent), or 'L'/'?' to list available signals."
 )
 
 type CodeToInject struct {
 	pipe    *bufio.Scanner
 	tempdir string
-	command []string
+	command *exec.Cmd
+	pid int
 	timeout time.Duration
 	signals map[uint32]string
-	reader liner.State
 }
 
 func NewCodeToInject(pid int, code string, timeout time.Duration, force bool, signals map[uint32]string) (CodeToInject, error) {
@@ -94,7 +96,9 @@ func NewCodeToInject(pid int, code string, timeout time.Duration, force bool, si
 		return returnvalue, err
 	}
 
-	// Open the fifo
+	// Open the fifo. This is done in read/write mode in order to prevent open()
+	// from blocking since the writer (the captive process) hasn't connected yet.
+	// This process will never write to the pipe.
 	if pipehandle, err = os.OpenFile(pipepath, os.O_RDWR, os.ModeNamedPipe); err != nil {
 		_ = os.RemoveAll(returnvalue.tempdir)
 		return returnvalue, err
@@ -114,19 +118,20 @@ func NewCodeToInject(pid int, code string, timeout time.Duration, force bool, si
 		return
 	})
 
-	perlpath, err := GetPathForBin("perl")
-
 	code = fmt.Sprintf(TEMPLATE, pipepath, code, terminator)
 	code = fmt.Sprintf("call Perl_eval_pv(\"%s\", 0)", code)
 	code = strings.Replace(code, "\n", "\\\n", -1)
-	log.Debug(perlpath)
-	returnvalue.command = []string{
+
+
+	returnvalue.command = exec.Command(
 		gdbpath,
 		"-quiet",
 		"-p",
 		strconv.Itoa(proc.Pid),
 		// Don't ask questions on the command line.
 		"-ex", "set confirm off",
+		// Disable "press return to continue"
+		"-ex", "set pagination off",
 		// Pass signals through to Perl without stopping the debugger.
 		"-ex", "handle all noprint nostop",
 		// Register a pending signal with Perl.
@@ -139,125 +144,204 @@ func NewCodeToInject(pid int, code string, timeout time.Duration, force bool, si
 		"-ex", code,
 		//"-ex", "detatch",
 		"-ex", "Quit",
-	}
+	)
 
-	if ( len(signals) ) {
-		returnvalue.reader = liner.NewLiner()
-		returnvalue.reader.SetCtrlCAborts(true)
-		returnvalue.signals = signals
-
-	}
-
+	returnvalue.signals = signals
 	returnvalue.timeout = timeout
+	returnvalue.pid = pid
 	return returnvalue, nil
+}
+
+func stdStreamProcessor(stderr bool) func(io.Reader, chan<- error) {
+	desc := "stdout"
+	if stderr {
+		desc = "stderr"
+	}
+	return func(stream io.Reader, errch chan<- error) {
+		scanner := bufio.NewScanner(stream)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Debugf("GDB %s: %s", desc, line)
+			line = strings.ToLower(line) // Don't deal with case in error detection.
+			// Known-fatal error strings:
+			if stderr {
+				if strings.Contains(line, "permission denied") || strings.Contains(line, "operation not permitted") {
+					errch<- fmt.Errorf("GDB Failed: %s", line)
+					break
+				}
+			}
+
+		}
+		if readerr := scanner.Err(); readerr != nil {
+			errch<- fmt.Errorf("Failed while reading GDB's %s: %s; use --debug to see full output", desc, readerr)
+		}
+	}
 }
 
 func (self *CodeToInject) Run() (string, error) {
 	var (
-		cout = &bytes.Buffer{}
-		cerr = &bytes.Buffer{}
-		returnvalue = &bytes.Buffer{}
+		returnvalue = bytes.Buffer{}
 		pipech = make(chan string)
-		signalch = make(chan int)
-		err  error
-		cmd = exec.Command(self.command[0], self.command[1:]...)
-		signalsoffered bool
+		signalch = make(chan int, 1)
+		gdbdonech = make(chan error, 1)
+		reader *liner.State
 	)
 
-	cmd.Stdout = cout
-	cmd.Stderr = cerr
-
-	log.Debugf("Starting command: %s", self.command)
-	if err = cmd.Run(); err != nil {
-		return "", fmt.Errorf("GDB invocation returned nonzero status: %s", err)
+	// Start goroutines that will watch lines of stdout/stderr for
+	// common conditions that indicate fatal errors, and kill the main
+	// polling loop if they occur.
+	if outp, err := self.command.StdoutPipe(); err != nil {
+		return "", fmt.Errorf("Could not hook up pipe to GDB command stdout: %s", err);
+	} else {
+		go stdStreamProcessor(false)(outp, gdbdonech)
 	}
 
-	log.Debugf("GDB invocation STDOUT: %s\n", cout.Bytes())
-	log.Debugf("GDB invocation STERR: %s\n", cerr.Bytes())
+	if errp, err := self.command.StderrPipe(); err != nil {
+		return "", fmt.Errorf("Could not hook up pipe to GDB command stderr: %s", err);
+	} else {
+		go stdStreamProcessor(true)(errp, gdbdonech)
+	}
 
+	log.Debugf("Starting command: %s %v", self.command.Path, self.command.Args)
+
+	if err := self.command.Start(); err != nil {
+		return "", fmt.Errorf("GDB invocation returned nonzero status: %s", err)
+	} else {
+		// TODO gentle kill then firm to prevent leaving debug hooks installed
+		defer self.command.Process.Kill()
+	}
+
+	// Start a goroutine reading from the pipe, which will (hopefully)
+	// soon receive output from the captive process. We can't just slurp
+	// all the output from the FIFO once GDB exits or times out, because
+	// it's (improbable but) possible that the captive process will be
+	// stuck in the midst of a close() operation on the pipe, or will never
+	// have opened it in the first place, causing reads to block forever.
 	go func(ch chan<- string, pipe *bufio.Scanner) {
 		for pipe.Scan() {
 			ch <- pipe.Text()
 		}
+		close(pipech)
 	}(pipech, self.pipe)
+
+	// Start a goroutine that will fire the timer/end condition when the GDB command
+	// exits. GDB should only exit after the captive process has flushed its write
+	// buffers to the FIFO when it calls close() on the named pipe's filehandle upon
+	// exiting the if... block in Perl, triggering close-on-destroy.
+	go func(kill chan<- error) {
+		kill <- self.command.Wait()
+	}(gdbdonech)
+
 	timer := time.NewTimer(self.timeout)
 
+	// Run the main multiplexing loop. There are several things being waited for here:
+	// 1. The timeout of the main GDB command's execution.
+	// 2. Buffered output from the captive process being read from that process's FIFO.
+	// 3. Output (and fatal errors) from GDB itself; if fatal errors occur, the loop should stop.
+	// 4. User input for signals to send, from the terminal prompting routine.
+	// 5. Completion of the main GDB command.
 	for {
 		select {
 		case line := <-pipech:
 			if len(line) == 0 {
-				return returnvalue.String(), self.pipe.Err()
+				// Maybe successful, maybe not:
+				gdbdonech <- self.pipe.Err()
 			} else {
 				returnvalue.WriteString(line)
 				returnvalue.WriteString("\n")
+				log.Debugf("Got data from captive process: %s\n", line)
 			}
 		case signal := <-signalch: {
-
 			if signal < 0 {
-				// If user requested cancel, end the timer.
-				timer.Reset(0)
-			} else {
-				if signal > 0 {
-					// If it was a real signal, send the kill.
-					if  err = cmd.Process.Signal(signal); err != nil {
-						// TODO WHAT
-					}
+				// If user requested cancel, end the loop.
+				gdbdonech <- errors.New("Interrupted")
+			} else if signal > 0 {
+				// If it was a real signal, send the kill.
+				if err := syscall.Kill(self.pid, syscall.Signal(signal)); err != nil {
+					log.Errorf("Failed to send signal to captive process: %s", err)
+					signalch <- 0
+				} else {
+					reader.Close()
+					log.Infof("Sent signal %d to captive process (%d)", signal, self.pid)
+					timer.Reset(self.timeout) // Stop prompting and wait to see if it wakes up.
 				}
-
-				// Even if the user just requested a re-prompt, reset the timer.
-				signalsoffered = false
-				timer.Reset(self.timeout)
+			} else { // 0 means "re-prompt"
+				if reader == nil {
+					// Use a lazy-initialized global object field so we can do a deferred
+					// destroy without re-creating a readline terminal each time a user
+					// requests a re-prompt.
+					reader = liner.NewLiner()
+					defer reader.Close()
+					reader.SetCtrlCAborts(true)
+					fmt.Println("The captive process is not responding. Send a signal to try to wake it up, or press CTRL+C to abort.")
+					fmt.Println("WARNING: Waking a process with a signal will almost certainly crash it after debug output is acquired.")
+					fmt.Println(SIGNALHELP)
+				}
+				go self.promptSignals(reader, signalch)
 			}
 		}
-		case <-timer.C:
-			if ( ! signalsoffered && len(self.signals) > 0 ) {
-				signalsoffered = true
-				go self.promptSignals(signalch)
-				timer.Reset(self.timeout)
+		case <- timer.C:
+			if len(self.signals) > 0 {
+				signalch <- 0
+			} else {
+				gdbdonech <- errors.New("GDB process timed out")
 			}
-			cmd.Process.Kill() // TODO gentle kill then firm to prevent leaving debug hooks installed
-			if returnvalue.Len() == 0 {
-				return returnvalue.String(), fmt.Errorf("GDB process timed out. Exit status: %d; code: %s", cmd.ProcessState.String())
-			}
+		case end := <-gdbdonech:
+			return returnvalue.String(), end
 		}
 	}
 }
 
-func (self *CodeToInject) promptSignals(ch chan int) {
-	if line, err := self.reader.Prompt("SEND A SIGNAL BRU"); err == nil {
-		line = strings.ToUpper(strings.TrimSpace(line));
-
-		if len(line) > 0 {
-			// Assumes signums are contiguous. So does the universe.
-			if signal, err := strconv.Atoi(line); err == nil && signal < 1 || signal > len(self.signals) {
-				ch <- signal
-				return
-			} else if strings.HasPrefix(line, "SIG") {
-				if val, ok := self.signals[line[3:]]; ok {
-					ch <- int(val)
-					return
-				}
-			} else if val, ok := self.signals[line]; ok {
-				ch <- int(val)
-				return
+func printSignals(signals map [uint32]string) {
+	l := len(signals)
+	// Roughly approximate the output of "kill -l"
+	for i := 1; i < l; i += 5 {
+		for j := i; j < i + 5 && j < l; j++ {
+			signame := signals[uint32(j)]
+			if len(signame) == 0 {
+				signame = "[unknown]"
 			} else {
-				fmt.Printf("Invalid input (no signal found as string or number): '%s'", line)
+				signame = "SIG" + signame
 			}
+			fmt.Printf("%2d) %-16s", j, signame)
 		}
-
-	} else if err == liner.ErrPromptAborted {
-		ch <- -1 // Write the "give up" signal.
-	} else {
-		log.Error("Error reading line: ", err)
+		fmt.Print("\n")
 	}
-	ch <- 0 // Invalid input
+}
+
+func (self *CodeToInject) promptSignals(reader *liner.State, ch chan<- int) {
+	for {
+		if line, err := reader.Prompt("Signal name, number, 'L' or '?': "); err == nil {
+			line = strings.ToUpper(strings.TrimSpace(line));
+
+			if len(line) > 0 {
+				// Assumes signums are contiguous. So does the universe.
+				if line == "L" || line == "?" {
+					printSignals(self.signals)
+					continue
+				} else if signal, err := strconv.Atoi(line); err == nil && signal > 1 && signal <= len(self.signals) {
+					ch <- signal
+					return
+				} else {
+					for k, v := range self.signals {
+						if ( strings.HasPrefix(line, "SIG") && v == line[3:] ) || v == line {
+							ch <- int(k)
+							return
+						}
+					}
+				}
+				fmt.Printf("Invalid input (no signal found as string or number): '%s'\n%s\n", line, SIGNALHELP)
+			}
+		} else if err == liner.ErrPromptAborted {
+			ch <- -1 // Write the "give up" signal.
+		} else {
+			log.Errorf("Error reading line: %s\n", err)
+		}
+	}
 }
 
 func (c *CodeToInject) Cleanup() {
 	log.Debug("Cleaning up")
-	if ( c.reader != nil ) {
-		c.reader.Close()
-	}
 	defer os.RemoveAll(c.tempdir)
 }
 
@@ -318,8 +402,9 @@ func GetPathForBin(name string, extra ...string) (string, error) {
 			filepath.Join("/usr/bin", name),
 			filepath.Join("/usr/local/bin", name),
 			filepath.Join("/bin", name),
-			filepath.Join(os.Getenv("HOMEBREW_ROOT"), name),
-			filepath.Join(os.Getenv("HOMEBREW_ROOT"), "bin", name),
+			// OSX specific stuff. Probably a waste, since the dylib version on that system won't work with GDB as of this writing.
+			//filepath.Join(os.Getenv("HOMEBREW_ROOT"), name),
+			//filepath.Join(os.Getenv("HOMEBREW_ROOT"), "bin", name),
 		)
 	}
 

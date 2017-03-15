@@ -10,11 +10,10 @@
 - Tests.
 - Thread support.
 - Execute code from commandline or from file.
-- Tablify signal list.
-- Stop timeout countdowns when users start entering signals to send? Restart them instead?
 - Look into Devel::GDB.
+- Better OSX support (lldb?)
 
-# Why Go/Why Not Perl?
+# Why is it written in Go, not Perl?
 
 `gdb-inject-perl` was written in Perl eventually (and that version can still be used; it's in the `legacy-pure-perl` subdirectory of the source repository). So why the switch? A few reasons:
 

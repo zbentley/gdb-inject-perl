@@ -12,16 +12,16 @@
     - [Where/when can I use it?](#wherewhen-can-i-use-it)
     - [So what's the catch?](#so-whats-the-catch)
     - [Where/when _should_ I use it?](#wherewhen-_should_-i-use-it)
-- [System Requirements](#system-requirements)
+- [System Requirements and Dependencies](#system-requirements-and-dependencies)
 - [Safeguards and Limitations](#safeguards-and-limitations)
-- [Signals](#signals)
 - [FAQ](#faq)
-    - [It doesn't work; it just says "Attaching to process". What gives?](#it-doesnt-work-it-just-says-attaching-to-process-what-gives)
-    - [On OSX it times out after saying "Unable to find Mach task port for process-id ___"](#on-osx-it-times-out-after-saying-unable-to-find-mach-task-port-for-process-id-___)
-    - [I want to inject something that changes my running program's state. Can I?](#i-want-to-inject-something-that-changes-my-running-programs-state-can-i)
-    - [I want to inject code into multiple places inside a process. Can I?](#i-want-to-inject-code-into-multiple-places-inside-a-process-can-i)
-    - [Why not just use the Perl debugger/GDB directly?](#why-not-just-use-the-perl-debuggergdb-directly)
-    - [Why use FIFOs, and not use perl debugger's RemotePort functionality?](#why-use-fifos-and-not-use-perl-debuggers-remoteport-functionality)
+      - [It doesn't work; it just says "GDB process timed out". What gives?](#it-doesnt-work-it-just-says-gdb-process-timed-out-what-gives)
+      - [On OSX it times out after saying "Unable to find Mach task port for process-id ___"](#on-osx-it-times-out-after-saying-unable-to-find-mach-task-port-for-process-id-___)
+      - [I want to inject something that changes my running program's state. Can I?](#i-want-to-inject-something-that-changes-my-running-programs-state-can-i)
+      - [I want to inject code into multiple places inside a process. Can I?](#i-want-to-inject-code-into-multiple-places-inside-a-process-can-i)
+      - [Why not just use the Perl debugger/GDB directly?](#why-not-just-use-the-perl-debuggergdb-directly)
+      - [Why use FIFOs, and not use perl debugger's RemotePort functionality?](#why-use-fifos-and-not-use-perl-debuggers-remoteport-functionality)
+      - [Why is it written in Go, not Perl?](#why-is-it-written-in-go-not-perl)
 - [Additional Resources](#additional-resources)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -53,7 +53,7 @@
     [1] 1234
     
     # Inject code into the backgrounded process
-    ~> inject.pl --pid 1234
+    ~> gdb-inject-perl --pid 1234 # Print the call stack that the current PID is in the middle of:
     INJECT at (eval 1) line 1.
     eval 'while (1) { sleep 1; }
     ;' called at -e line 1
@@ -64,32 +64,40 @@
 #### Running arbitrary code
 
 ```bash
-    ~> inject.pl --pid 1234 --code 'print STDERR qq{FOOO $$}; sleep 1;'
-    FOOO 1234 # printed from other process
+    ~> gdb-inject-perl --pid 1234 --code 'print STDERR qq{FOOO $$}; sleep 1;'
+    FOOO 1234 # printed from other process, wherever it's running, to its STDOUT
 
-    ~> inject.pl --pid <SOMEPID> --code 'print $fh STDERR qq{FOOO $$}; sleep 1;'
-    FOOO 6789 # printed from gdb-inject-perl
+    ~> gdb-inject-perl --pid 1234 --code "print $fh qq{FOOO $$}; sleep 1;"
+    FOOO 1234 # printed from gdb-inject-perl
 ```
 
 #### Options
+
 - `--pid PID`
-	- Process ID of the Perl process to inject code into. `PID` can be any kind of Perl process: embedded, mod_perl, simple script, etc. This option is required.
-- `--code CODE`: String of code that will be injected into the Perl process at `PID` and run. This code will have access to a special file handle, `$fh`, which connects it to `inject.pl`. When `$fh` is written to, the output will be returned by `inject.pl`. If `CODE` is omitted, it defaults to printing the value of [Carp::longmess](https://metacpan.org/pod/Carp) to `$fh`. `CODE` should not perform complex alterations or change the state of the program being attached to. `CODE` may not contain double quotation marks or Perl code that does not compile with [strict](hhttps://metacpan.org/pod/strict) and [warnings](https://metacpan.org/pod/warnings). To bypass these restrictions, use `--force`.
+	- Process ID of the Perl process to inject code into. `PID` can be any kind of Perl process: embedded, mod_perl, simple script, etc.
+	- This option is required.
+- `--code CODE`: String of code that will be injected into the Perl process at `PID` and run.
+    - Defaults to returning the value of [Carp::longmess](https://metacpan.org/pod/Carp) back to `gdb-inject-perl`, with a carp string of `INJECT`. `Carp` will be required if not already present in the captive process.
+    - Code that runs via `CODE` will have access to a special file handle in a local variable, `$fh`, which connects it to `gdb-inject-perl`. When `$fh` is written to, the output will be consumed and printed by `gdb-inject-perl`. 
+    - `CODE` should not perform complex alterations or change the state of the program being attached to; if it does, the captive process may experience undefined behavior, or may just crash (it will often crash even if `CODE` is well-behaved; `gdb-inject-perl` is a last resort, after all).
+    - `CODE` may not contain double quotation marks or Perl code that does not compile with [strict](hhttps://metacpan.org/pod/strict) and [warnings](https://metacpan.org/pod/warnings). To bypass these restrictions, use `--force`. This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
 - `--force`
-	- Bypass sanity checks and restrictions on the content of `CODE`.
-- `--[no]signals`
-	- Enable or disable the option to send signals to the process at `PID`. If `--signals` is enabled, once `inject.pl` has injected code into the process at `PID`, the user will be prompted to send signals to `PID` in order to interrupt any blocking system calls and force `CODE` to be run. See ["Signals"](#Signals) for more info. Defaults to enabled. If [Term::ReadKey](https://metacpan.org/pod/Term::ReadKey) is not installed on your system, disabling signals via `--nosignals` bypasses thie requirement for that module.
-- `--timeout SECONDS`
-	- Number of seconds to wait until `PID` runs `CODE`. If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `inject.pl` gives up. Defaults to 5 seconds.
-- `--verbose`
-	- Show all GDB output in addition to values captured from the process at `PID`.
+	- If set, bypass sanity checks and restrictions on the content of `CODE`.
+	- `--force` can also be used to bypass syntax-validation failures due to there not being a locatable `perl` binary on your system (e.g. if the target process is running an embedded Perl, or is using an interpreter at a nonstandard location).
+	- Defaults to disabled.
+- `--signals`
+	- Enable the option to send signals to the process at `PID` if it does not generate debug output within the time specified by `TIMEOUT`. Once `gdb-inject-perl` has injected code into the process at `PID`, the user will be prompted to send signals to `PID` in order to interrupt any blocking system calls and force `CODE` to be run. See ["Signals"](#Signals) for more info.
+	- Defaults to disabled.
+- `--timeout TIMEOUT`
+	- Time to wait until `PID` runs `CODE`. Accepts any string accepted by [ParseDuration](https://golang.org/pkg/time/#ParseDuration) (e.g. `10s`, `2.5m` etc.). If the timeout is exceeded (usually because `PID` is in the middle of a blocking system call), `gdb-inject-perl` gives up.
+	- Defaults to `5s`.
+- `--debug`
+	- Show debug/raw GDB output in addition to values captured from the process at `PID`.
 - `--help`
 	- Show help message.
-- `--man`
-	- Show manpage/perldoc.
 
 ### Where/when can I use it?
-This program only works on POSIX-like OSes on which GDB is installed. In practice, this includes most Linuxes, BSDs, and Solaris OSes out of the box. GDB [can be installed on OSX](http://ntraft.com/installing-gdb-on-os-x-mavericks/) and other operating systems as well.
+This program only works on POSIX-like OSes on which GDB is installed. In practice, this includes most Linuxes, BSDs, and Solaris OSes out of the box. GDB [can be installed on OSX](http://ntraft.com/installing-gdb-on-os-x-mavericks/) (though it has problems with the dylib version installed on newer OSXes) and other operating systems as well.
 
 - It works on scripts.
 - It works on mod_perl processes.
@@ -99,55 +107,53 @@ This program only works on POSIX-like OSes on which GDB is installed. In practic
 Just pass it the process ID of a Perl process and it will do its best to inject code.
 
 ### So what's the catch?
-It's incredibly dangerous.
+It's incredibly dangerous. Only use it on processes that you're OK with having killed.
 
-The script works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it _does_ modify anything, the interpreter might not detect state changes correctly.
+The script works by injecting arbitrary function calls into the runtime of a complex, high-level programming language (Perl). Even if the code you inject doesn't modify anything, it might be injected in the wrong place, and corrupt internal interpreter state. If it _does_ modify anything, the interpreter might not detect state changes correctly (this is what happens, for example, if you use `gdb-inject-perl` to dump the call stack of a Perl process that is stuck in a blocking system call, via the `--signals` argument).
 
 In short, it should not be used on a healthy process with important functionality that could be interrupted. "Interrupted", in this case, does not mean the same thing as a signal interrupt (Perl-safe or unsafe); it's possible to break/segfault/corrupt Perl in the midst of operations that would not normally be interruptible at all. *gdb-inject-perl* tries to mimic safe-signal delivery behavior, but does not do so perfectly.
 
 ### Where/when _should_ I use it?
-*gdb-inject-perl* is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
+`gdb-inject-perl` is recommended for use on processes that are already known to be deranged, and that are soon to be killed.
 
-If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use *gdb-inject-perl* to get more information.
+If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use `gdb-inject-perl` to get more information.
 
 # System Requirements and Dependencies
-- POSIX-ish OS.
-    - OSX builds after Sierra are not compatible with this tool. TODO link dylib loader compat issues.
+- Unix-ish OS.
+    - OSX builds after Sierra are not compatible with this too; see [this issue](https://sourceware.org/bugzilla/show_bug.cgi?id=20981) for more information.
 - Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
-- GDB installed.
-- Root privileges (usually; unless you're injecting to a process you own)
+- GDB installed in a standard location, ideally on your `PATH`.
+- Root privileges (usually; unless you're injecting to a process you own, in which case you do not need special permissions).
  
-
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 
 
 - Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
 	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
 - Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway, but it will almost certainly not work.
-	- This restriction is imposed because code must be supplied as a string argument into a GDB call. You can work around it by using the [alternative quoting constructs in Perl](http://perldoc.perl.org/perlop.html#Quote-and-Quote-like-Operators), e.g. `$interpolated = qq{var: $var}; $not_interpolated = q{var: $var}`.
-- If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl inject.pl [options]`.
+- If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl gdb-inject-perl [options]`.
 - If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls).
 # Signals
 
 Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
 
-        ~> inject.pl --pid 1234
-        [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
-        int
-        [inject.pl] SIGINT sent to 1234
-
-        # Signals can also be entered by number:
-        [inject.pl] Press a number key to send a signal to 1234. Press 'l' or 'L' to list signals.
-        15
-        [inject.pl] SIGTERM sent to 1234
+        ~> gdb-inject-perl --pid 1234 --signals
+        The captive process is not responding. Send a signal to try to wake it up, or press CTRL+C to abort.
+        WARNING: Waking a process with a signal will almost certainly crash it after debug output is acquired.
+        Type a case-insensitive signal name or number ('sigint', 'INT', and '2' are equivalent), or 'L'/'?' to list available signals.
+        Signal name, number, 'L' or '?': int
+        Sent signal 2 to captive process (1234)
+        ...stacktrace
 
 Signals can be entered by number or name, case-insensitive. Pressing "L" triggers a listing of signals, similar to the behavior of `kill -l`.
 
-**Note:** the behavior of a target process after it has been signalled is _even more_ unknown than its behavior when running injected code without signals. While `inject.pl` tries to run the injected code before a process shuts down, signalling a target process often results in its termination immediately after running `CODE`. Also, since `inject.pl` uses the target process's internal Perl signal handling check as the attach point for the injected code, it is _not_ guaranteed that any internal (safe or unsafe) signal handlers already installed in the target process will run when it is signalled by `inject.pl`.
+*WARNING*: At the best of times, there's a significant risk that `gdb-inject-perl` will cause the target process to violently exit (segfault or similar). That risk is increased a *lot* if you use `--signals` to inject code into a blocking system call.
+
+**Note:** the behavior of a target process after it has been signalled is _even more_ unknown than its behavior when running injected code without signals. While `gdb-inject-perl` tries to run the injected code before a process shuts down, signalling a target process often results in its termination immediately after running `CODE`. Also, since `gdb-inject-perl` uses the target process's internal Perl signal handling check as the attach point for the injected code, it is _not_ guaranteed that any internal (safe or unsafe) signal handlers already installed in the target process will run when it is signalled by `gdb-inject-perl`.
 
 # FAQ
 
-#### It doesn't work; it just says "Attaching to process". What gives?
+#### It doesn't work; it just says "GDB process timed out". What gives?
 Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [signals](#signals) for more info. If you don't want to use signals, try `strace` and friends.
 
 #### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
@@ -166,6 +172,15 @@ Probably, but if you do, don't tell me how you pulled it off. It sounds like you
 
 #### Why use FIFOs, and not use perl debugger's RemotePort functionality?
 Something else might be using it. *gdb-inject-perl* is meant to be usable with minimal interference with other code running in a Perl process, _even other debuggers_.
+
+#### Why is it written in Go, not Perl?
+
+`gdb-inject-perl` was written in Perl eventually (and that version can still be used; it's in the `legacy-pure-perl` subdirectory of the source repository). So why the switch? A few reasons:
+
+- Static Linking/Runtime Dependencies. Running the compiled Go version of `gdb-inject-perl` doesn't require Perl, Go, or any preinstalled software other than libc. If that seems pointless, consider the use case of debugging an embedded Perl interpreter (e.g. in `mod_perl` or similar) on a system that does not have a compatible or usable installation of the `perl` commandline utility. Systems without commandline Perls are admittedly rare, but also consider that some systems may not have Perl easily locatable on the `PATH`, and that different versions of Perl make different runtime assumptions and support different features, and that commandline-Perl may often be severely outdated, or custom-compiled for a system. While trying to get emergency debugging information from an embedded, opaque Perl process, having to stop and deal with the vagaries of operating system package configuration is far from ideal.
+	- A commandline Perl interpreter is still required for testing custom `--code` values being injected. Testing can, however, be bypassed with the `--force` switch.
+- Library Dependencies. The pure-Perl version had several CPAN modules as dependencies. For some users, installing CPAN modules in order to use a last-ditch debugging tool may take too much time, be out of the user's expertise level, or not be supported when running as the root user (which is required in order to use this script). Since Go is compiled and statically linked, it should be dependecy-free; even though third-party dependencies are used in the source code, end users don't have to remember to install them, provided they are running the version of `gdb-inject-perl` written for thier operating system.
+- Concurrency. Even though `gdb-inject-perl` is very simple, it still needs low-level access to pipes, and needs to simultaneously wait for timeouts, user signals, or output from the process being inspected. This is totally possible in Perl, but, due to Perl's single-threaded nature and default buffering, requires careful coding around `sysread` and `select`, or the installation of additional CPAN dependencies. The implementation in the pure-Perl version of `gdb-inject-perl` is far from perfect, and is still nearly a hundred lines of relatively esoteric code. Go suports multiplexed event waiting by default, and also has more powerful standard-library facilities for dealing with pipes.
 
 # Additional Resources
 - Perlmonks [conversation about gdb-eval injection](http://www.perlmonks.org/?node_id=694095)
