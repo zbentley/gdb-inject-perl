@@ -12,10 +12,12 @@
     - [Where/when can I use it?](#wherewhen-can-i-use-it)
     - [So what's the catch?](#so-whats-the-catch)
     - [Where/when _should_ I use it?](#wherewhen-_should_-i-use-it)
-- [System Requirements and Dependencies](#system-requirements-and-dependencies)
+- [System Requirements](#system-requirements)
 - [Safeguards and Limitations](#safeguards-and-limitations)
+- [Signals](#signals)
 - [FAQ](#faq)
       - [It doesn't work; it just says "GDB process timed out". What gives?](#it-doesnt-work-it-just-says-gdb-process-timed-out-what-gives)
+      - [After I used `gdb-inject-perl` on my process, it segfaulted/terminated/did something totally wrong! Why?](#after-i-used-gdb-inject-perl-on-my-process-it-segfaultedterminateddid-something-totally-wrong-why)
       - [On OSX it times out after saying "Unable to find Mach task port for process-id ___"](#on-osx-it-times-out-after-saying-unable-to-find-mach-task-port-for-process-id-___)
       - [I want to inject something that changes my running program's state. Can I?](#i-want-to-inject-something-that-changes-my-running-programs-state-can-i)
       - [I want to inject code into multiple places inside a process. Can I?](#i-want-to-inject-code-into-multiple-places-inside-a-process-can-i)
@@ -118,21 +120,23 @@ In short, it should not be used on a healthy process with important functionalit
 
 If a Perl process is stuck, broken, or otherwise malfunctioning, and you want more information than logs, `/proc`, `lsof`, `strace`, or any of the other standard [black-box debugging](http://jvns.ca/blog/2014/04/20/debug-your-programs-like-theyre-closed-source/) utilities can give you, you can use `gdb-inject-perl` to get more information.
 
-# System Requirements and Dependencies
+# System Requirements
+
 - Unix-ish OS.
     - OSX builds after Sierra are not compatible with this too; see [this issue](https://sourceware.org/bugzilla/show_bug.cgi?id=20981) for more information.
-- Modern Perl (5.6 or later, theoretically; 5.8.8 or later in practice).
 - GDB installed in a standard location, ideally on your `PATH`.
+    - If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl gdb-inject-perl [options]`.
 - Root privileges (usually; unless you're injecting to a process you own, in which case you do not need special permissions).
- 
+- Perl 5.8 or later
+    - If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls); `gdb-inject-perl` itself does not require Perl to run.
+
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 
 
 - Code that will not compile with `strict` and `warnings` will be rejected. You can use the `--force` switch to run it anyway (at your own risk).
 	- **Warning:** "Will it compile?" is checked using `perl -c`, which [will run `BEGIN` and `END` blocks](http://stackoverflow.com/a/12908487/249199). Such blocks will be executed during the pre-injection compilation check.  Besides, if code you plan on injecting into an already-running Perl process has `BEGIN` or `END` blocks, it's probably a bad idea.
 - Code containing literal double quotation marks, even backslash-escaped ones, will be rejected. You can use the `--force` switch to run it anyway, but it will almost certainly not work.
-- If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl gdb-inject-perl [options]`.
-- If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls).
+
 # Signals
 
 Sometimes, code is injected into a target process and not run. This is often because the target process is in the middle of a blocking system call (e.g. [`sleep`](http://linux.die.net/man/3/sleep)). In those situations, it is often useful to interrupt that system call by sending the target process a signal. To facilitate this, when target processes do not run injected code within a small amount of time, `inject.pl` prompts the user on the command line to send a signal (by name or number) to the target process, e.g.:
@@ -155,6 +159,9 @@ Signals can be entered by number or name, case-insensitive. Pressing "L" trigger
 
 #### It doesn't work; it just says "GDB process timed out". What gives?
 Your process is probably in a blocking system call or uninterruptible state (doing something other than just running Perl code). You can send it a signal and it might wake up and run your injected code. See [signals](#signals) for more info. If you don't want to use signals, try `strace` and friends.
+
+#### After I used `gdb-inject-perl` on my process, it segfaulted/terminated/did something totally wrong! Why?
+This is the cost of using an aggressive code injector. This tool does not take much care to preserve the pre-existing state of a perl process, and as a result often corrupts that state in such a way that Perl itself crashes with an unhandled error. `gdb-inject-perl` is dangerous and should only be run on processes you were willing to kill anyway.
 
 #### On OSX it times out after saying "Unable to find Mach task port for process-id ___"
 You need to [codesign the debugger](https://gcc.gnu.org/onlinedocs/gcc-4.8.0/gnat_ugn_unw/Codesigning-the-Debugger.html).

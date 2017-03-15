@@ -26,6 +26,12 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+# DEPRECATION WARNING
+
+`inject.pl` is the legacy version of the `gdb-inject-perl` tool; it is no longer maintained and has many limitations that the current version of the tool does not.
+
+I recommend you use the current version, which is available at [https://github.com/zbentley/gdb-inject-perl](https://github.com/zbentley/gdb-inject-perl)
+
 # Overview
 *gdb-inject-perl* is a script that uses [GDB](http://www.gnu.org/software/GDB/) to attach to a running Perl process, and execute code _inside that process_. It works by using the debugger to inject a Perl `eval` call with a string of code supplied by the user (it defaults to code that prints out the Perl call stack). If everything goes as planned, the Perl process in question will run that code in the middle of whatever else it is doing.
 
