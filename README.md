@@ -189,6 +189,12 @@ Something else might be using it. *gdb-inject-perl* is meant to be usable with m
 - Library Dependencies. The pure-Perl version had several CPAN modules as dependencies. For some users, installing CPAN modules in order to use a last-ditch debugging tool may take too much time, be out of the user's expertise level, or not be supported when running as the root user (which is required in order to use this script). Since Go is compiled and statically linked, it should be dependecy-free; even though third-party dependencies are used in the source code, end users don't have to remember to install them, provided they are running the version of `gdb-inject-perl` written for thier operating system.
 - Concurrency. Even though `gdb-inject-perl` is very simple, it still needs low-level access to pipes, and needs to simultaneously wait for timeouts, user signals, or output from the process being inspected. This is totally possible in Perl, but, due to Perl's single-threaded nature and default buffering, requires careful coding around `sysread` and `select`, or the installation of additional CPAN dependencies. The implementation in the pure-Perl version of `gdb-inject-perl` is far from perfect, and is still nearly a hundred lines of relatively esoteric code. Go suports multiplexed event waiting by default, and also has more powerful standard-library facilities for dealing with pipes.
 
+# Building from Source
+
+`gdb-inject-perl` is a semi-standard [Go](https://golang.org/) program. It uses "evil" go internals in a limited way.
+
+It can be built with go 1.8. Once your `GOPATH` environment variable is properly configured, use [`glide`](https://github.com/Masterminds/glide) to install the required source dependencies via `glide install`. After that, the executable can be built via `go build` in the project root/over the scope of the `main.go` file.
+
 # Additional Resources
 - Perlmonks [conversation about gdb-eval injection](http://www.perlmonks.org/?node_id=694095)
 - Massive [presentation on various Perl debugging strategies, including this one](https://docs.google.com/presentation/d/1Lxk_YHUEV3k4dXJZlpsgUuph0PwmvpHbI8EX8Igy5rY/edit#slide=id.g11c288d8_0_35)
