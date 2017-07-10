@@ -125,12 +125,12 @@ If a Perl process is stuck, broken, or otherwise malfunctioning, and you want mo
 # System Requirements
 
 - Unix-ish OS.
-    - OSX builds after Sierra are not compatible with this too; see [this issue](https://sourceware.org/bugzilla/show_bug.cgi?id=20981) for more information.
+    - OSX builds after Sierra are not compatible with `gdb-inject-perl`; see [this issue](https://sourceware.org/bugzilla/show_bug.cgi?id=20981) for more information.
 - GDB installed in a standard location, ideally on your `PATH`.
     - If `gdb` cannot be found on your system, the script will not start. If `gdb` is installed in a nonstandard location, set the `GDB` environment variable to its path before invoking the injector. For example: `GDB=/path/to/gdb perl gdb-inject-perl [options]`.
 - Root privileges (usually; unless you're injecting to a process you own, in which case you do not need special permissions).
 - Perl 5.8 or later
-    - If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls); `gdb-inject-perl` itself does not require Perl to run.
+    - If `perl` cannot be found on the system, in the `PATH` or other common locations, the script will not start. You can use the `--force` switch to bypass this limitation (e.g. for running against embedded Perls). `gdb-inject-perl` itself does not require Perl to run.
 
 # Safeguards and Limitations
 There are a few basic safeguards used by *gdb-inject-perl*. 
